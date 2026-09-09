@@ -34,5 +34,8 @@ jobs:
       - name: Check fatal Python errors
         run: ruff check . --select E9,F63,F7,F82 --output-format=github
 
+      - name: Run standalone unit tests
+        run: python -m unittest discover -s tests -v
+
       - name: Check repository invariants
         run: python scripts/repo_healthcheck.py
