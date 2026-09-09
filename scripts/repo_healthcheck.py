@@ -28,6 +28,8 @@ WRITE_TO_PRODUCTION_SCRIPTS = (
     "server-opt/swap_tailwind_cdn.py",
     "server-opt/patch_landing_fixes.py",
     "server-opt/sanitize_generated_proof.py",
+    "server-opt/deploy_release.py",
+    "server-opt/prune_releases.py",
 )
 
 
@@ -81,7 +83,7 @@ def check_generator(failures: list[str]) -> None:
     require("рост органики" in facade, "synthetic city KPI sanitizer missing", failures)
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
     require(
-        "from city_morphology import city_prepositional" in facade,
+        "city_morphology import city_prepositional" in facade,
         "generator does not import shared city morphology",
         failures,
     )
@@ -145,11 +147,44 @@ def check_write_safety(failures: list[str]) -> None:
         require("--apply" in text, f"{rel_path}: production writes are not gated by --apply", failures)
 
 
+def check_release_ops(failures: list[str]) -> None:
+    deploy_path = ROOT / "server-opt/deploy_release.py"
+    prune_path = ROOT / "server-opt/prune_releases.py"
+    disk_path = ROOT / "server-opt/disk-autoclean.sh"
+    require(deploy_path.is_file(), "atomic release deploy helper missing", failures)
+    require(prune_path.is_file(), "release retention helper missing", failures)
+    require(disk_path.is_file(), "disk-autoclean.sh missing", failures)
+
+    if deploy_path.is_file():
+        deploy = deploy_path.read_text(encoding="utf-8")
+        require("os.replace(temp_link, current)" in deploy, "release switch is no longer atomic", failures)
+        require("is not a symlink" in deploy, "deploy no longer refuses a real current directory", failures)
+        require("rollback target" in deploy, "deploy no longer reports rollback target", failures)
+
+    if prune_path.is_file():
+        prune = prune_path.read_text(encoding="utf-8")
+        require("if path == active" in prune, "release pruning lacks active-release deletion guard", failures)
+        require("resolved.parent != root" in prune, "release pruning can escape releases root", failures)
+        require("current.is_symlink()" in prune, "release pruning cannot prove active release", failures)
+
+    if disk_path.is_file():
+        disk = disk_path.read_text(encoding="utf-8")
+        require("JOURNAL_DAYS" in disk and "JOURNAL_MAX" in disk, "disk cleanup retention is not configurable", failures)
+        require("--vacuum-time=3d" not in disk, "disk cleanup reverted to 3-day journal history", failures)
+        require("--vacuum-size=15M" not in disk, "disk cleanup reverted to 15M journal cap", failures)
+        require("auth.log" not in disk, "disk cleanup directly targets authentication logs", failures)
+
+
 def check_ci_and_tests(failures: list[str]) -> None:
     ci_path = ROOT / ".github/workflows/ci.yml"
     require(ci_path.is_file(), "CI workflow missing", failures)
-    require((ROOT / "tests/test_city_morphology.py").is_file(), "city morphology tests missing", failures)
-    require((ROOT / "tests/test_seo_healthcheck.py").is_file(), "SEO healthcheck tests missing", failures)
+    for test_file, message in (
+        ("tests/test_city_morphology.py", "city morphology tests missing"),
+        ("tests/test_seo_healthcheck.py", "SEO healthcheck tests missing"),
+        ("tests/test_deploy_release.py", "atomic deploy tests missing"),
+        ("tests/test_prune_releases.py", "release retention tests missing"),
+    ):
+        require((ROOT / test_file).is_file(), message, failures)
     if ci_path.is_file():
         ci = ci_path.read_text(encoding="utf-8")
         require(
@@ -188,6 +223,7 @@ def main() -> int:
     check_generator(failures)
     check_seo_tooling(failures)
     check_write_safety(failures)
+    check_release_ops(failures)
     check_ci_and_tests(failures)
     check_nginx(failures)
     check_repository_shape(failures)
@@ -203,6 +239,7 @@ def main() -> int:
     print("  generator fail-closed/sanitization guards present")
     print("  generator and repair tools share city morphology")
     print("  SEO healthcheck is index-policy/sitemap/canonical aware")
+    print("  atomic release deploy + safe release retention are guarded")
     print("  standalone unit tests are wired into CI")
     print("  canonical repository templates take priority")
     print("  production maintenance scripts require --apply")
