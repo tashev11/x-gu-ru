@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Rebuild pages for cities whose deployment directory is empty.
+"""Rebuild pages for known broken city directories.
 
-These dirs exist on disk (drwx------ owned by root) but contain no HTML, so
-the sitemap URLs return 404 (no file) or 403 (dir unreadable by www-data).
-We regenerate hub + all keyword landings through the hardened public
-content_generator facade, then set permissions so nginx can serve them.
+Safe by default: without ``--apply`` this command only prints the rebuild plan.
+Real writes and chmod operations require an explicit flag. Rendering is routed
+through the hardened top-level ``content_generator`` facade.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-# Allow importing the canonical /opt/p3-app/content_generator.py facade.
 sys.path.insert(0, "/opt/p3-app")
 os.chdir("/opt/p3-app")
 
@@ -42,8 +41,8 @@ BROKEN_CITY_SLUGS = {
 
 
 def load_city(slug: str) -> SimpleNamespace | None:
-    with CITIES_CSV.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+    with CITIES_CSV.open(encoding="utf-8") as file:
+        for row in csv.DictReader(file):
             if (row.get("slug") or "").strip() == slug:
                 return SimpleNamespace(
                     slug=slug,
@@ -55,8 +54,8 @@ def load_city(slug: str) -> SimpleNamespace | None:
 
 def load_services() -> list[SimpleNamespace]:
     services: list[SimpleNamespace] = []
-    with KEYWORDS_CSV.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+    with KEYWORDS_CSV.open(encoding="utf-8") as file:
+        for row in csv.DictReader(file):
             name = (row.get("name") or "").strip()
             slug = (row.get("slug") or "").strip()
             niche = (row.get("niche") or "SEO").strip()
@@ -66,28 +65,66 @@ def load_services() -> list[SimpleNamespace]:
 
 
 def chmod_recursive(path: Path, dir_mode: int = 0o755, file_mode: int = 0o644) -> None:
-    """Set permissions so nginx (www-data) can read."""
     try:
         os.chmod(path, dir_mode if path.is_dir() else file_mode)
-    except OSError as e:
-        print(f"  chmod fail {path}: {e}")
+    except OSError as exc:
+        print(f"  chmod fail {path}: {exc}", file=sys.stderr)
     if path.is_dir():
         for child in path.iterdir():
             chmod_recursive(child, dir_mode, file_mode)
 
 
 def main() -> int:
-    services = load_services()
-    print(f"Loaded {len(services)} services")
-    site = SimpleNamespace(id=1)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--apply", action="store_true", help="actually rebuild files")
+    parser.add_argument("--root", type=Path, default=PUBLIC_ROOT)
+    parser.add_argument(
+        "--slug",
+        action="append",
+        default=[],
+        help="limit to a city slug; may be supplied multiple times",
+    )
+    args = parser.parse_args()
 
-    total_built = 0
-    for slug in sorted(BROKEN_CITY_SLUGS):
+    if not CITIES_CSV.is_file() or not KEYWORDS_CSV.is_file():
+        print("Required city/keyword CSV data is missing", file=sys.stderr)
+        return 1
+
+    services = load_services()
+    requested = set(args.slug) if args.slug else set(BROKEN_CITY_SLUGS)
+    unknown = requested - BROKEN_CITY_SLUGS
+    if unknown:
+        print(
+            "Refusing slugs outside the reviewed BROKEN_CITY_SLUGS set: "
+            + ", ".join(sorted(unknown)),
+            file=sys.stderr,
+        )
+        return 2
+
+    plan: list[tuple[str, SimpleNamespace]] = []
+    for slug in sorted(requested):
         city = load_city(slug)
-        if not city:
+        if city is None:
             print(f"  SKIP {slug}: not found in CSV")
             continue
-        city_dir = PUBLIC_ROOT / slug
+        plan.append((slug, city))
+
+    pages_per_city = 1 + len(services)
+    print(
+        f"plan: cities={len(plan)} services={len(services)} "
+        f"pages_per_city={pages_per_city} total_pages={len(plan) * pages_per_city}"
+    )
+    for slug, city in plan:
+        print(f"  {slug}: {city.name} -> {args.root / slug}")
+
+    if not args.apply:
+        print("[DRY-RUN] No files changed. Re-run with --apply after reviewing the plan.")
+        return 0
+
+    site = SimpleNamespace(id=1)
+    total_built = 0
+    for slug, city in plan:
+        city_dir = args.root / slug
         city_dir.mkdir(parents=True, exist_ok=True)
 
         hub_html = _render_city_hub_html(city, services)
@@ -95,18 +132,17 @@ def main() -> int:
         built = 1
 
         for service in services:
-            sdir = city_dir / service.slug
-            sdir.mkdir(parents=True, exist_ok=True)
+            service_dir = city_dir / service.slug
+            service_dir.mkdir(parents=True, exist_ok=True)
             html = _render_html_landing(site, city, service)
-            (sdir / "index.html").write_text(html, encoding="utf-8")
+            (service_dir / "index.html").write_text(html, encoding="utf-8")
             built += 1
 
         chmod_recursive(city_dir)
-
         total_built += built
-        print(f"  {slug}: built {built} pages (1 hub + {len(services)} services)")
+        print(f"  {slug}: built {built} pages")
 
-    print(f"\n[DONE] total_pages_built={total_built}")
+    print(f"[APPLIED] total_pages_built={total_built}")
     return 0
 
 
