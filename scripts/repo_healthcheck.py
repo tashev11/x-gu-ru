@@ -48,6 +48,24 @@ def check_templates(failures: list[str]) -> None:
     require('/assets/tailwind.min.css' in landing, "landing does not use local Tailwind CSS", failures)
 
 
+def check_generator(failures: list[str]) -> None:
+    facade_path = ROOT / "content_generator.py"
+    legacy_path = ROOT / "_content_generator_legacy.py"
+    require(facade_path.is_file(), "content generator facade missing", failures)
+    require(legacy_path.is_file(), "preserved legacy generator missing", failures)
+    if not facade_path.is_file():
+        return
+
+    facade = facade_path.read_text(encoding="utf-8")
+    require("autoescape=True" in facade, "generator HTML autoescape is not enforced", failures)
+    require("XGU_ALLOW_MISSING_KEEP_CONFIG" in facade, "missing index-policy fail-closed guard", failures)
+    require("_sanitize_generated_html" in facade, "generated HTML sanitizer missing", failures)
+    require('key in {"aggregateRating", "review"}' in facade, "rating/review schema sanitizer missing", failures)
+    require('payload.get("@type") == "LocalBusiness"' in facade, "generated LocalBusiness sanitizer missing", failures)
+    require("рост органики" in facade, "synthetic city KPI sanitizer missing", failures)
+    require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
+
+
 def check_nginx(failures: list[str]) -> None:
     nginx_dir = ROOT / "server-opt/nginx"
     require(not (nginx_dir / "x-gu.ru.conf.current").exists(), "stale x-gu.ru.conf.current exists", failures)
@@ -64,6 +82,7 @@ def check_nginx(failures: list[str]) -> None:
 
 def check_repository_shape(failures: list[str]) -> None:
     require((ROOT / "README.md").is_file(), "README.md missing", failures)
+    require((ROOT / ".env.example").is_file(), ".env.example missing", failures)
     require((ROOT / ".github/workflows/ci.yml").is_file(), "CI workflow missing", failures)
     require((ROOT / "requirements.txt").is_file(), "requirements.txt missing", failures)
 
@@ -71,6 +90,7 @@ def check_repository_shape(failures: list[str]) -> None:
 def main() -> int:
     failures: list[str] = []
     check_templates(failures)
+    check_generator(failures)
     check_nginx(failures)
     check_repository_shape(failures)
 
@@ -82,6 +102,7 @@ def main() -> int:
 
     print("Repository healthcheck: OK")
     print("  templates synchronized")
+    print("  generator fail-closed/sanitization guards present")
     print("  canonical robots/template fixes present")
     print("  nginx canonicalization and hardening present")
     return 0
