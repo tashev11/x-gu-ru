@@ -1,40 +1,35 @@
 #!/bin/sh
-# Удаление мусора на x-gu.ru. Ничего из контента сайта не трогает.
-# Запуск: ssh khaki 'sh /opt/p3-app/scripts/cleanup_junk.sh'
-set -u
+# Conservative cleanup for x-gu.ru.
+# Removes caches and old rotated files but preserves active auth/nginx logs
+# and recent rollback material.
+set -eu
 
-echo "=== ДО ==="
+echo "=== BEFORE ==="
 df -h / | tail -1
 
-# 1. Логи SSH-брутфорса (21M + 12M). Обрезаем, файл остаётся живым.
-rm -f /var/log/auth.log.1
-: > /var/log/auth.log
+# 1. Never truncate active authentication logs. Only remove old compressed
+# rotations after 30 days; fail2ban/systemd journal data remains available.
+find /var/log -maxdepth 1 -type f -name 'auth.log*.gz' -mtime +30 -delete 2>/dev/null || true
 
-# 2. Резервные копии файлов, которые правились 14-17 августа.
-#    Сайт две недели работает на новых версиях — бэкапы больше не нужны.
-#    Самый свежий бэкап конфига nginx намеренно оставлен.
-rm -f /opt/p3-app/app/services/*.bak.*
-rm -f /opt/p3-app/app/templates/*.bak.*
-rm -f /var/www/x-gu.ru/current/sitemap.xml.bak.*
-rm -f /var/www/x-gu.ru/current/sitemaps/*.bak.*
-rm -f /var/www/x-gu.ru/current/privacy/index.html.bak.*
-rm -f /etc/nginx/sites-available/x-gu.ru.conf.bak.20260614-214135
+# 2. Keep recent patch/deploy backups for rollback; remove only stale copies.
+find /opt/p3-app/app/services -maxdepth 1 -type f -name '*.bak.*' -mtime +30 -delete 2>/dev/null || true
+find /opt/p3-app/app/templates -maxdepth 1 -type f -name '*.bak.*' -mtime +30 -delete 2>/dev/null || true
+find /var/www/x-gu.ru/current -maxdepth 1 -type f -name 'sitemap.xml.bak.*' -mtime +30 -delete 2>/dev/null || true
+find /var/www/x-gu.ru/current/sitemaps -maxdepth 1 -type f -name '*.bak.*' -mtime +30 -delete 2>/dev/null || true
+find /var/www/x-gu.ru/current/privacy -maxdepth 1 -type f -name 'index.html.bak.*' -mtime +30 -delete 2>/dev/null || true
 
-# 3. Системная статистика и посторонний лог.
-rm -rf /var/log/sysstat/*
-rm -f /var/log/geoengine-sync-x-gu.log
+# 3. Keep a useful nginx history window instead of deleting after two days.
+find /var/log/nginx -type f -name '*.gz' -mtime +14 -delete 2>/dev/null || true
 
-# 4. Сжатые логи nginx старше двух суток.
-find /var/log/nginx -name '*.gz' -mtime +2 -delete 2>/dev/null
-
-# 5. Кэш Python и временные файлы.
-find /opt/p3-app -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null
+# 4. Python caches and known temporary scratch files.
+find /opt/p3-app -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 rm -f /tmp/seo_*.log /tmp/shrink*.log /tmp/empty_*.log /tmp/empty_dirs.json
 rm -f /tmp/patch_landing.log /tmp/inject_widget.log /tmp/rerender.log
 
-# 6. Системные кэши.
-journalctl --vacuum-size=8M >/dev/null 2>&1
-apt-get clean 2>/dev/null
+# 5. Package/system caches. Preserve enough journal for incident analysis.
+journalctl --vacuum-time=14d >/dev/null 2>&1 || true
+journalctl --vacuum-size=100M >/dev/null 2>&1 || true
+apt-get clean 2>/dev/null || true
 
-echo "=== ПОСЛЕ ==="
+echo "=== AFTER ==="
 df -h / | tail -1
