@@ -4,9 +4,9 @@
 Safe by default: the command only builds and prints a plan. Real changes to
 robots meta, sitemap and keep-config require ``--apply``.
 
-Normal operation requires a reviewed JSON policy file. The historical built-in
-baseline is retained only as an explicit emergency fallback via
-``--use-builtin-policy``; it is never selected silently.
+Normal operation requires a reviewed JSON policy file. The historical baseline
+is stored as versioned data in ``index_policy.baseline.json`` and is available
+only via the explicit ``--use-builtin-policy`` emergency flag.
 """
 from __future__ import annotations
 
@@ -24,35 +24,8 @@ DEFAULT_WEB_ROOT = Path("/var/www/x-gu.ru/current")
 DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
 DEFAULT_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
 DEFAULT_POLICY = Path(os.getenv("XGU_INDEX_POLICY", "/opt/p3-app/data/index_policy.json"))
+BUNDLED_BASELINE = Path(__file__).resolve().with_name("index_policy.baseline.json")
 BASE = "https://x-gu.ru"
-
-# Historical emergency baseline only. Routine production changes must use an
-# external reviewed policy file so this code cannot silently become stale.
-BUILTIN_OPEN_CITIES = [
-    "arkhangelsk", "astrakhan", "balakovo", "balashikha", "derbent", "groznyi",
-    "iakutsk", "irkutsk", "izhevsk", "kaliningrad", "kirov", "kolomna",
-    "krasnodar", "krasnoiarsk", "kursk", "lipetsk", "miass", "moskva",
-    "naberezhnye-chelny", "neftekamsk", "nizhnevartovsk", "novosibirsk",
-    "orel", "riazan", "samara", "sankt-peterburg", "sevastopol", "smolensk",
-    "tiumen", "toliatti", "tomsk", "tver", "vladikavkaz", "vologda",
-    "ekaterinburg", "kazan", "nizhnii-novgorod", "cheliabinsk", "ufa",
-    "rostov-na-donu", "omsk", "voronezh", "perm", "volgograd",
-    "podolsk", "belgorod", "serpukhov", "elektrostal", "odintsovo",
-    "zelenograd", "ioshkar-ola", "piatigorsk", "barnaul", "maikop",
-    "norilsk", "essentuki", "khasaviurt",
-]
-
-BUILTIN_OPEN_SERVICES = [
-    "prodvizhenie-saita", "seo-optimizatsiia-saita",
-    "prodvizhenie-internet-magazina", "lokalnoe-prodvizhenie-saita",
-    "sbor-semanticheskogo-iadra", "vyvod-saita-iz-pod-filtra",
-    "ispravlenie-seo-oshibok",
-    "sozdanie-saita", "sozdanie-lendinga", "sozdanie-internet-magazina",
-    "sozdanie-saita-na-wordpress", "sozdanie-saita-na-tilde",
-    "nastroika-reklamy", "nastroika-reklamy-v-iandeks-direkt",
-    "nastroika-reklamy-v-google-ads", "mashtabirovanie-reklamnykh-kampanii",
-    "seo-audit-saita", "audit-povedencheskikh-faktorov",
-]
 
 NOINDEX_TAG = '<meta name="robots" content="noindex, follow">'
 INDEX_TAG = (
@@ -76,11 +49,27 @@ def _policy_digest(cities: list[str], services: list[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _load_policy_file(path: Path, *, allow_example: bool = False) -> tuple[list[str], list[str]]:
+    if not path.is_file():
+        raise SystemExit(f"Policy file not found: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("example_only") and not allow_example:
+        raise SystemExit(
+            f"Refusing example-only policy: {path}. Copy it to a reviewed production policy, "
+            "set example_only=false, and record the review source/date."
+        )
+    cities = _dedupe(list(payload.get("open_cities") or []))
+    services = _dedupe(list(payload.get("open_services") or []))
+    if not cities or not services:
+        raise SystemExit("Policy must contain non-empty open_cities and open_services")
+    return cities, services
+
+
 def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[str], list[str], str, str]:
     if use_builtin:
-        cities = list(BUILTIN_OPEN_CITIES)
-        services = list(BUILTIN_OPEN_SERVICES)
-        return cities, services, "builtin-emergency-baseline", _policy_digest(cities, services)
+        cities, services = _load_policy_file(BUNDLED_BASELINE)
+        source = f"bundled-emergency-baseline:{BUNDLED_BASELINE}"
+        return cities, services, source, _policy_digest(cities, services)
 
     if path is None or not path.is_file():
         raise SystemExit(
@@ -88,12 +77,7 @@ def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[s
             "(recommended) or explicitly use --use-builtin-policy for emergency recovery only."
         )
 
-    raw = path.read_text(encoding="utf-8")
-    payload = json.loads(raw)
-    cities = _dedupe(list(payload.get("open_cities") or []))
-    services = _dedupe(list(payload.get("open_services") or []))
-    if not cities or not services:
-        raise SystemExit("Policy must contain non-empty open_cities and open_services")
+    cities, services = _load_policy_file(path)
     return cities, services, str(path.resolve()), _policy_digest(cities, services)
 
 
@@ -259,7 +243,7 @@ def main() -> int:
     parser.add_argument(
         "--use-builtin-policy",
         action="store_true",
-        help="explicit emergency fallback to the historical built-in policy",
+        help="explicit emergency fallback to the bundled historical baseline",
     )
     parser.add_argument("--web-root", type=Path, default=DEFAULT_WEB_ROOT)
     parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
