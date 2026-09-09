@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Install the hardened generator files into the private ``app.services`` package.
 
-Dry-run by default. With ``--apply`` the three files are installed as one
-reviewed set, existing targets are backed up, and each target is replaced via
-``os.replace`` after a complete temporary copy has been written.
+Dry-run by default. With ``--apply`` the three files are staged first, existing
+targets are backed up, and the set is replaced via ``os.replace``. If any
+replacement fails, already-replaced targets are restored automatically.
 """
 from __future__ import annotations
 
@@ -33,21 +33,55 @@ def validate_sources(source_root: Path) -> list[str]:
     return errors
 
 
-def install_file(source: Path, target: Path, backup_suffix: str) -> Path | None:
-    backup: Path | None = None
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        backup = target.with_name(target.name + backup_suffix)
-        shutil.copy2(target, backup)
+def install_set(source_root: Path, dest: Path, backup_suffix: str) -> list[Path]:
+    dest.mkdir(parents=True, exist_ok=True)
+    backups: dict[Path, Path | None] = {}
+    staged: dict[Path, Path] = {}
+    replaced: list[Path] = []
 
-    temp = target.with_name(f".{target.name}.next.{os.getpid()}")
     try:
-        shutil.copy2(source, temp)
-        os.replace(temp, target)
+        # Stage every new file before mutating any live target.
+        for name in REQUIRED_FILES:
+            source = source_root / name
+            target = dest / name
+            temp = dest / f".{name}.next.{os.getpid()}"
+            shutil.copy2(source, temp)
+            staged[target] = temp
+
+        # Snapshot every existing live target before the first replace.
+        for target in staged:
+            backup: Path | None = None
+            if target.exists():
+                backup = target.with_name(target.name + backup_suffix)
+                shutil.copy2(target, backup)
+            backups[target] = backup
+
+        for target, temp in staged.items():
+            os.replace(temp, target)
+            replaced.append(target)
+
+    except Exception:
+        rollback_errors: list[str] = []
+        for target in reversed(replaced):
+            backup = backups.get(target)
+            try:
+                if backup is not None and backup.exists():
+                    shutil.copy2(backup, target)
+                elif target.exists():
+                    target.unlink()
+            except Exception as rollback_exc:  # noqa: BLE001
+                rollback_errors.append(f"{target}: {rollback_exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                "generator install failed and rollback was incomplete: " + "; ".join(rollback_errors)
+            )
+        raise
     finally:
-        if temp.exists():
-            temp.unlink()
-    return backup
+        for temp in staged.values():
+            if temp.exists():
+                temp.unlink()
+
+    return [backup for backup in backups.values() if backup is not None]
 
 
 def main() -> int:
@@ -79,15 +113,13 @@ def main() -> int:
         return 0
 
     suffix = ".bak." + time.strftime("%Y%m%d-%H%M%S")
-    backups: list[Path] = []
-    installed: list[Path] = []
-    for name in REQUIRED_FILES:
-        backup = install_file(source_root / name, dest / name, suffix)
-        if backup is not None:
-            backups.append(backup)
-        installed.append(dest / name)
+    try:
+        backups = install_set(source_root, dest, suffix)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Install failed; rollback attempted: {exc}", file=sys.stderr)
+        return 4
 
-    print(f"[APPLIED] installed={len(installed)} backups={len(backups)}")
+    print(f"[APPLIED] installed={len(REQUIRED_FILES)} backups={len(backups)}")
     for backup in backups:
         print(f"  backup: {backup}")
     print("Run a one-page render smoke test before any bulk re-render.")
