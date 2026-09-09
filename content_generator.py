@@ -41,7 +41,6 @@ _TEMPLATE_NAMES = {
     "homepage_master.html.j2",
 }
 
-_ORIGINAL_TEMPLATE_ENV = _legacy._template_env
 _ORIGINAL_LOAD_KEEP_CONFIG = _legacy._load_keep_config
 _ORIGINAL_RENDER_LANDING = _legacy._render_html_landing
 _ORIGINAL_RENDER_CITY_HUB = _legacy._render_city_hub_html
@@ -57,15 +56,19 @@ def _candidate_template_dirs() -> list[Path]:
     if explicit:
         candidates.append(Path(explicit))
 
-    # Normal private-backend deployment location.
-    candidates.append(Path("app/templates"))
-
     here = Path(__file__).resolve()
+
+    # Canonical repository templates have priority over legacy app/templates.
     # Public-repo layout: content_generator.py + server-opt/templates.
     candidates.append(here.parent / "server-opt" / "templates")
+
     # Private-backend layout: app/services/content_generator.py and repo root.
     if len(here.parents) >= 3:
         candidates.append(here.parents[2] / "server-opt" / "templates")
+
+    # Compatibility fallback for older deployments that have not yet moved
+    # their templates to the canonical repository directory.
+    candidates.append(Path("app/templates"))
 
     unique: list[Path] = []
     seen: set[Path] = set()
