@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Re-render the homepage + all city hub pages with the new design
-(grouped service chips by category; Cyrillic city grid).
+"""Re-render the homepage and city hub pages.
 
-Only touches hub index.html (city_dir/index.html) and the site root index.html.
-Service landing pages are untouched. Overwrites in place (no net disk growth).
+Safe by default: the command prints the pages it would touch. Real writes need
+``--apply``. Service landing pages are not modified.
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -30,34 +30,80 @@ KEYWORDS_CSV = Path("/opt/p3-app/data/keywords_all.csv")
 
 
 def load_city_map() -> dict:
-    m = {}
-    with CITIES_CSV.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+    mapping = {}
+    with CITIES_CSV.open(encoding="utf-8") as file:
+        for row in csv.DictReader(file):
             slug = (row.get("slug") or "").strip()
             if slug:
-                m[slug] = SimpleNamespace(
+                mapping[slug] = SimpleNamespace(
                     slug=slug,
                     name=(row.get("city") or "").strip(),
                     region=(row.get("region") or "Россия").strip(),
                 )
-    return m
+    return mapping
 
 
 def load_services() -> list:
-    out = []
-    with KEYWORDS_CSV.open(encoding="utf-8") as f:
-        for row in csv.DictReader(f):
+    services = []
+    with KEYWORDS_CSV.open(encoding="utf-8") as file:
+        for row in csv.DictReader(file):
             name = (row.get("name") or "").strip()
             slug = (row.get("slug") or "").strip()
             if name and slug:
-                out.append(SimpleNamespace(name=name, slug=slug, niche=(row.get("niche") or "SEO").strip()))
-    return out
+                services.append(
+                    SimpleNamespace(
+                        name=name,
+                        slug=slug,
+                        niche=(row.get("niche") or "SEO").strip(),
+                    )
+                )
+    return services
+
+
+def discover_hubs(root: Path, city_map: dict) -> tuple[list[tuple[Path, object]], list[str]]:
+    hubs: list[tuple[Path, object]] = []
+    skipped: list[str] = []
+    for name in sorted(os.listdir(root)):
+        city_dir = root / name
+        if not city_dir.is_dir() or name == "sitemaps" or name.startswith("."):
+            continue
+        hub_file = city_dir / "index.html"
+        if not hub_file.is_file():
+            continue
+        if not any((city_dir / child).is_dir() for child in os.listdir(city_dir)):
+            continue
+        city = city_map.get(name)
+        if city is None:
+            skipped.append(name)
+            continue
+        hubs.append((hub_file, city))
+    return hubs, skipped
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--apply", action="store_true", help="actually write rendered pages")
+    parser.add_argument("--root", type=Path, default=PUBLIC_ROOT)
+    args = parser.parse_args()
+
+    if not args.root.is_dir():
+        raise SystemExit(f"Public root not found: {args.root}")
+    if not CITIES_CSV.is_file() or not KEYWORDS_CSV.is_file():
+        raise SystemExit("Required city/keyword CSV data is missing")
+
     city_map = load_city_map()
     services = load_services()
-    print(f"cities in csv={len(city_map)} services={len(services)}")
+    hubs, skipped = discover_hubs(args.root, city_map)
+    print(
+        f"plan: homepage=1 hubs={len(hubs)} skipped={len(skipped)} "
+        f"services={len(services)}"
+    )
+    if skipped:
+        print("skipped city dirs not in CSV: " + ", ".join(skipped[:20]))
+
+    if not args.apply:
+        print("[DRY-RUN] No files changed. Re-run with --apply after reviewing the plan.")
+        return 0
 
     env = _template_env()
     home_tpl = env.get_template("homepage_master.html.j2")
@@ -65,34 +111,20 @@ def main() -> int:
         base_domain=settings.base_domain,
         cities_json=json.dumps(_homepage_cities(), ensure_ascii=False),
     )
-    (PUBLIC_ROOT / "index.html").write_text(home_html, encoding="utf-8")
-    os.chmod(PUBLIC_ROOT / "index.html", 0o644)
-    print("homepage re-rendered")
+    home_file = args.root / "index.html"
+    home_file.write_text(home_html, encoding="utf-8")
+    os.chmod(home_file, 0o644)
 
-    hubs = skipped = 0
-    for d in sorted(os.listdir(PUBLIC_ROOT)):
-        cdir = PUBLIC_ROOT / d
-        if not cdir.is_dir() or d in ("sitemaps",) or d.startswith("."):
-            continue
-        hub_file = cdir / "index.html"
-        if not hub_file.is_file():
-            continue
-        has_sub = any((cdir / x).is_dir() for x in os.listdir(cdir))
-        if not has_sub:
-            continue
-        city = city_map.get(d)
-        if city is None:
-            skipped += 1
-            print(f"  skip {d}: not in cities csv")
-            continue
+    rendered = 0
+    for hub_file, city in hubs:
         html = _render_city_hub_html(city, services)
         hub_file.write_text(html, encoding="utf-8")
         os.chmod(hub_file, 0o644)
-        hubs += 1
-        if hubs % 50 == 0:
-            print(f"  ... {hubs} hubs re-rendered", flush=True)
+        rendered += 1
+        if rendered % 50 == 0:
+            print(f"  ... {rendered} hubs re-rendered", flush=True)
 
-    print(f"[DONE] homepage=1 hubs={hubs} skipped={skipped}")
+    print(f"[APPLIED] homepage=1 hubs={rendered} skipped={len(skipped)}")
     return 0
 
 
