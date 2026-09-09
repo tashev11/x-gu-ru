@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Step 4 of the index shrink: remove links to closed pages from navigation.
+"""Re-render only the currently open index core.
 
-- homepage: city grid + hidden SEO links -> only the 44 OPEN cities
-- the 44 open hubs: service chips -> only the 18 OPEN services, plus any
-  whitelist service of that specific city (so pages that already rank keep
-  their internal link)
-Closed hubs (131 cities) are left as-is: they are noindexed anyway.
+- homepage: city grid/SEO links -> configured open cities
+- open city hubs: configured open services + per-city whitelist extras
+- closed hubs remain untouched and keep their noindex state
+
+Rendering is routed through the hardened top-level content_generator facade.
 """
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ sys.path.insert(0, "/opt/p3-app")
 os.chdir("/opt/p3-app")
 
 from app.core.config import settings  # noqa: E402
-from app.services.content_generator import (  # noqa: E402
+from content_generator import (  # noqa: E402
     _render_city_hub_html,
     _homepage_cities,
     _template_env,
@@ -35,13 +35,21 @@ KEYWORDS_CSV = Path("/opt/p3-app/data/keywords_all.csv")
 
 
 def load_config():
+    if not KEEP_CONFIG.is_file():
+        raise SystemExit(f"Missing required keep-config: {KEEP_CONFIG}")
     cfg = json.loads(KEEP_CONFIG.read_text(encoding="utf-8"))
-    return cfg["open_cities"], cfg["open_services"]
+    open_cities = cfg.get("open_cities") or []
+    open_services = cfg.get("open_services") or []
+    if not open_cities or not open_services:
+        raise SystemExit("keep-config contains an empty open_cities/open_services set")
+    return open_cities, open_services
 
 
 def whitelist_extras() -> dict[str, set[str]]:
-    """city_slug -> set of service slugs present in whitelist for that city."""
+    """city_slug -> service slugs explicitly protected by whitelist."""
     extras: dict[str, set[str]] = {}
+    if not WHITELIST.is_file():
+        return extras
     for line in WHITELIST.read_text(encoding="utf-8").splitlines():
         u = line.strip()
         if not u:
@@ -86,7 +94,6 @@ def main() -> int:
     city_map = load_city_map()
     svc_map = load_services_map()
 
-    # homepage with only open cities
     open_set = set(open_cities)
     cities_for_home = [c for c in _homepage_cities() if c["slug"] in open_set]
     env = _template_env()
@@ -99,7 +106,6 @@ def main() -> int:
     os.chmod(WEB_ROOT / "index.html", 0o644)
     print(f"homepage: {len(cities_for_home)} cities in grid")
 
-    # open hubs with filtered services
     hubs = 0
     for slug in open_cities:
         city = city_map.get(slug)
@@ -110,6 +116,7 @@ def main() -> int:
         services = [svc_map[s] for s in slugs_for_city if s in svc_map]
         hub_html = _render_city_hub_html(city, services)
         out = WEB_ROOT / slug / "index.html"
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(hub_html, encoding="utf-8")
         os.chmod(out, 0o644)
         hubs += 1
