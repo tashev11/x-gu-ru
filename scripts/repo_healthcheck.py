@@ -130,6 +130,9 @@ def check_seo_tooling(failures: list[str]) -> None:
             ("open_missing_sitemap", "SEO healthcheck cannot detect open pages missing from sitemap"),
             ("closed_in_sitemap", "SEO healthcheck cannot detect closed pages leaking into sitemap"),
             ("canonical_url_mismatch", "SEO healthcheck does not validate canonical URL against page URL"),
+            ("invalid_jsonld_pages", "SEO healthcheck cannot detect invalid JSON-LD"),
+            ("broken_internal_links", "SEO healthcheck cannot detect broken internal links"),
+            ("canonical_duplicate_pages", "SEO healthcheck cannot detect duplicate canonical URLs"),
         ):
             require(token in health, message, failures)
         require(
@@ -281,7 +284,7 @@ def main() -> int:
     print("  templates synchronized")
     print("  generator fail-closed/sanitization guards present")
     print("  generator and repair tools share city morphology")
-    print("  SEO healthcheck is index-policy/sitemap/canonical aware")
+    print("  SEO healthcheck covers index policy, sitemap, canonical, JSON-LD and internal links")
     print("  reviewed index policy is external/versioned and auditable")
     print("  atomic release deploy + safe release retention are guarded")
     print("  generator facade installation stages + rolls back as a set")
