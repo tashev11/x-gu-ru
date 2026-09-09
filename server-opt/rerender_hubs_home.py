@@ -18,7 +18,7 @@ sys.path.insert(0, "/opt/p3-app")
 os.chdir("/opt/p3-app")
 
 from app.core.config import settings  # noqa: E402
-from app.services.content_generator import (  # noqa: E402
+from content_generator import (  # noqa: E402
     _render_city_hub_html,
     _homepage_cities,
     _template_env,
@@ -59,7 +59,6 @@ def main() -> int:
     services = load_services()
     print(f"cities in csv={len(city_map)} services={len(services)}")
 
-    # 1) homepage
     env = _template_env()
     home_tpl = env.get_template("homepage_master.html.j2")
     home_html = home_tpl.render(
@@ -70,7 +69,6 @@ def main() -> int:
     os.chmod(PUBLIC_ROOT / "index.html", 0o644)
     print("homepage re-rendered")
 
-    # 2) hubs: every city dir that has an index.html AND at least one service subdir
     hubs = skipped = 0
     for d in sorted(os.listdir(PUBLIC_ROOT)):
         cdir = PUBLIC_ROOT / d
@@ -79,7 +77,6 @@ def main() -> int:
         hub_file = cdir / "index.html"
         if not hub_file.is_file():
             continue
-        # must look like a city hub (has service subdirs)
         has_sub = any((cdir / x).is_dir() for x in os.listdir(cdir))
         if not has_sub:
             continue
