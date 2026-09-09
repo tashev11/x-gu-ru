@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
 
-from server_opt_import import load_deploy_module
 
-
-deploy_release = load_deploy_module()
+MODULE_PATH = Path(__file__).resolve().parents[1] / "server-opt" / "deploy_release.py"
+SPEC = importlib.util.spec_from_file_location("xgu_deploy_release", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"Cannot load deploy module from {MODULE_PATH}")
+deploy_release = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(deploy_release)
 
 
 class DeployReleaseTests(unittest.TestCase):
