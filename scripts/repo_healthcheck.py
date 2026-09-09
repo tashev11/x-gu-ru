@@ -2,7 +2,7 @@
 """Repository-level safety checks for x-gu.ru.
 
 These checks intentionally avoid importing the private ``app.*`` backend, so
-GitHub Actions can validate the public repository on every push/PR.
+GitHub Actions and local validation can protect the same invariants.
 """
 from __future__ import annotations
 
@@ -47,11 +47,7 @@ def check_templates(failures: list[str]) -> None:
         require(root_copy.is_file(), f"missing root template: {name}", failures)
         require(prod_copy.is_file(), f"missing production template: {prod_copy}", failures)
         if root_copy.is_file() and prod_copy.is_file():
-            require(
-                root_copy.read_bytes() == prod_copy.read_bytes(),
-                f"template copies diverged: {name}",
-                failures,
-            )
+            require(root_copy.read_bytes() == prod_copy.read_bytes(), f"template copies diverged: {name}", failures)
 
     landing = (ROOT / "server-opt/templates/landing_master.html.j2").read_text(encoding="utf-8")
     hub = (ROOT / "server-opt/templates/city_hub_master.html.j2").read_text(encoding="utf-8")
@@ -84,16 +80,8 @@ def check_generator(failures: list[str]) -> None:
     require('payload.get("@type") == "LocalBusiness"' in facade, "generated LocalBusiness sanitizer missing", failures)
     require("рост органики" in facade, "synthetic city KPI sanitizer missing", failures)
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
-    require(
-        "city_morphology import city_prepositional" in facade,
-        "generator does not import shared city morphology",
-        failures,
-    )
-    require(
-        "_legacy._city_prepositional = city_prepositional" in facade,
-        "legacy render path is not patched to shared city morphology",
-        failures,
-    )
+    require("city_morphology import city_prepositional" in facade, "generator does not import shared city morphology", failures)
+    require("_legacy._city_prepositional = city_prepositional" in facade, "legacy render path is not patched to shared city morphology", failures)
 
     canonical_pos = facade.find('here.parent / "server-opt" / "templates"')
     fallback_pos = facade.find('candidates.append(Path("app/templates"))')
@@ -114,11 +102,7 @@ def check_seo_tooling(failures: list[str]) -> None:
 
     if repair_path.is_file():
         repair = repair_path.read_text(encoding="utf-8")
-        require(
-            "from city_morphology import city_prepositional" in repair,
-            "SEO repair duplicates city morphology instead of using shared module",
-            failures,
-        )
+        require("from city_morphology import city_prepositional" in repair, "SEO repair duplicates city morphology instead of using shared module", failures)
 
     if health_path.is_file():
         health = health_path.read_text(encoding="utf-8")
@@ -221,7 +205,10 @@ def check_release_ops(failures: list[str]) -> None:
 
 def check_ci_and_tests(failures: list[str]) -> None:
     ci_path = ROOT / ".github/workflows/ci.yml"
+    validator_path = ROOT / "scripts/validate_repo.py"
     require(ci_path.is_file(), "CI workflow missing", failures)
+    require(validator_path.is_file(), "shared local/CI validator missing", failures)
+
     for test_file, message in (
         ("tests/test_city_morphology.py", "city morphology tests missing"),
         ("tests/test_seo_healthcheck.py", "SEO healthcheck tests missing"),
@@ -231,15 +218,21 @@ def check_ci_and_tests(failures: list[str]) -> None:
         ("tests/test_shrink_index_policy.py", "index policy safety tests missing"),
     ):
         require((ROOT / test_file).is_file(), message, failures)
+
+    if validator_path.is_file():
+        validator = validator_path.read_text(encoding="utf-8")
+        for token, message in (
+            ("-m\", \"compileall", "shared validator lost Python compile check"),
+            ("-m\", \"ruff", "shared validator lost Ruff fatal-error check"),
+            ("-m\", \"unittest", "shared validator lost unit tests"),
+            ("scripts/repo_healthcheck.py", "shared validator lost repository invariant checks"),
+        ):
+            require(token in validator, message, failures)
+
     if ci_path.is_file():
         ci = ci_path.read_text(encoding="utf-8")
-        require(
-            "python -m unittest discover -s tests -v" in ci,
-            "CI no longer runs standalone unit tests",
-            failures,
-        )
-        require("python -m compileall -q ." in ci, "CI syntax compilation check missing", failures)
-        require("python scripts/repo_healthcheck.py" in ci, "CI repository invariant check missing", failures)
+        require("python scripts/validate_repo.py" in ci, "GitHub CI does not use shared validator", failures)
+        require("python -m pip install --disable-pip-version-check ruff" in ci, "CI no longer installs Ruff for validator", failures)
 
 
 def check_nginx(failures: list[str]) -> None:
@@ -288,7 +281,7 @@ def main() -> int:
     print("  reviewed index policy is external/versioned and auditable")
     print("  atomic release deploy + safe release retention are guarded")
     print("  generator facade installation stages + rolls back as a set")
-    print("  standalone unit tests are wired into CI")
+    print("  GitHub CI and local checks share one validation entrypoint")
     print("  canonical repository templates take priority")
     print("  production maintenance scripts require --apply")
     print("  canonical robots/template fixes present")
