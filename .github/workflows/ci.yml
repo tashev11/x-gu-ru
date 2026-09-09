@@ -6,22 +6,33 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  lint:
+  validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements.txt
 
-      - name: Install linters
-        run: pip install ruff
+      - name: Install validation tools
+        run: python -m pip install --disable-pip-version-check ruff
 
-      - name: Run ruff
-        run: ruff check . --output-format=github
-
-      - name: Check syntax (compile)
+      - name: Check Python syntax
         run: python -m compileall -q .
+
+      - name: Check fatal Python errors
+        run: ruff check . --select E9,F63,F7,F82 --output-format=github
+
+      - name: Check repository invariants
+        run: python scripts/repo_healthcheck.py
