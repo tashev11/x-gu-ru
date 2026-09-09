@@ -6,6 +6,7 @@ GitHub Actions can validate the public repository on every push/PR.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -138,6 +139,36 @@ def check_seo_tooling(failures: list[str]) -> None:
         )
 
 
+def check_index_policy(failures: list[str]) -> None:
+    shrink_path = ROOT / "server-opt/shrink_index.py"
+    example_path = ROOT / "server-opt/index_policy.example.json"
+    baseline_path = ROOT / "server-opt/index_policy.baseline.json"
+    require(shrink_path.is_file(), "shrink_index.py missing", failures)
+    require(example_path.is_file(), "index policy example missing", failures)
+    require(baseline_path.is_file(), "versioned index policy baseline missing", failures)
+
+    if shrink_path.is_file():
+        shrink = shrink_path.read_text(encoding="utf-8")
+        require("BUNDLED_BASELINE" in shrink, "shrink_index does not use versioned baseline data", failures)
+        require("--use-builtin-policy" in shrink, "emergency baseline is not explicitly gated", failures)
+        require("example_only" in shrink, "shrink_index does not reject example-only policies", failures)
+        require("policy_sha256" in shrink, "applied keep-config does not record policy hash", failures)
+        require("BUILTIN_OPEN_CITIES" not in shrink, "city policy lists leaked back into Python", failures)
+        require("BUILTIN_OPEN_SERVICES" not in shrink, "service policy lists leaked back into Python", failures)
+
+    if example_path.is_file():
+        payload = json.loads(example_path.read_text(encoding="utf-8"))
+        require(payload.get("example_only") is True, "index policy example is not marked example_only", failures)
+
+    if baseline_path.is_file():
+        payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+        require(bool(payload.get("reviewed_at")), "baseline index policy has no review date", failures)
+        require(bool(payload.get("source_note")), "baseline index policy has no source note", failures)
+        require(bool(payload.get("open_cities")), "baseline index policy has no cities", failures)
+        require(bool(payload.get("open_services")), "baseline index policy has no services", failures)
+        require(not payload.get("example_only", False), "baseline index policy is marked example-only", failures)
+
+
 def check_write_safety(failures: list[str]) -> None:
     for rel_path in WRITE_TO_PRODUCTION_SCRIPTS:
         path = ROOT / rel_path
@@ -194,6 +225,7 @@ def check_ci_and_tests(failures: list[str]) -> None:
         ("tests/test_deploy_release.py", "atomic deploy tests missing"),
         ("tests/test_prune_releases.py", "release retention tests missing"),
         ("tests/test_install_generator_facade.py", "generator installer rollback tests missing"),
+        ("tests/test_shrink_index_policy.py", "index policy safety tests missing"),
     ):
         require((ROOT / test_file).is_file(), message, failures)
     if ci_path.is_file():
@@ -225,7 +257,6 @@ def check_repository_shape(failures: list[str]) -> None:
     require((ROOT / "README.md").is_file(), "README.md missing", failures)
     require((ROOT / ".env.example").is_file(), ".env.example missing", failures)
     require((ROOT / "requirements.txt").is_file(), "requirements.txt missing", failures)
-    require((ROOT / "server-opt/index_policy.example.json").is_file(), "index policy example missing", failures)
 
 
 def main() -> int:
@@ -233,6 +264,7 @@ def main() -> int:
     check_templates(failures)
     check_generator(failures)
     check_seo_tooling(failures)
+    check_index_policy(failures)
     check_write_safety(failures)
     check_release_ops(failures)
     check_ci_and_tests(failures)
@@ -250,6 +282,7 @@ def main() -> int:
     print("  generator fail-closed/sanitization guards present")
     print("  generator and repair tools share city morphology")
     print("  SEO healthcheck is index-policy/sitemap/canonical aware")
+    print("  reviewed index policy is external/versioned and auditable")
     print("  atomic release deploy + safe release retention are guarded")
     print("  generator facade installation stages + rolls back as a set")
     print("  standalone unit tests are wired into CI")
