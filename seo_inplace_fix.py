@@ -12,51 +12,10 @@ import re
 import sys
 from pathlib import Path
 
+from city_morphology import city_prepositional
+
 ROOT = Path("/var/www/x-gu.ru/current")
 CITIES_CSV = Path("/opt/p3-app/data/ru_cities_with_population.csv")
-
-
-def city_prepositional(city_name: str) -> str:
-    irregular = {
-        "Москва": "Москве",
-        "Санкт-Петербург": "Санкт-Петербурге",
-        "Нижний Новгород": "Нижнем Новгороде",
-        "Великий Новгород": "Великом Новгороде",
-        "Орёл": "Орле",
-        "Орел": "Орле",
-        "Йошкар-Ола": "Йошкар-Оле",
-        "Набережные Челны": "Набережных Челнах",
-        "Минеральные Воды": "Минеральных Водах",
-        "Великие Луки": "Великих Луках",
-        "Ярославль": "Ярославле",
-        "Севастополь": "Севастополе",
-        "Ставрополь": "Ставрополе",
-    }
-    if city_name in irregular:
-        return irregular[city_name]
-    for sep in ("-на-", "-над-", "-под-"):
-        if sep in city_name:
-            head, _, tail = city_name.partition(sep)
-            return city_prepositional(head) + sep + tail
-    if city_name.endswith("ия"):
-        return city_name[:-2] + "ии"
-    if city_name.endswith("ый"):
-        return city_name[:-2] + "ом"
-    if city_name.endswith("ий"):
-        return city_name[:-2] + "ем"
-    if city_name.endswith("ой"):
-        return city_name[:-2] + "ом"
-    if city_name.endswith("а"):
-        return city_name[:-1] + "е"
-    if city_name.endswith("я"):
-        return city_name[:-1] + "е"
-    if city_name.endswith("ь"):
-        return city_name[:-1] + "и"
-    if city_name.endswith("ы"):
-        return city_name[:-1] + "ах"
-    if city_name.endswith(("о", "е", "и", "у", "ю", "э", "ё")):
-        return city_name
-    return city_name + "е"
 
 
 def load_cities(pop_min: int = 0) -> list[tuple[str, str, str]]:
