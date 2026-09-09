@@ -1,0 +1,19 @@
+name: Runner Smoke
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Runner allocated
+        run: |
+          echo "runner-ok"
+          uname -a
