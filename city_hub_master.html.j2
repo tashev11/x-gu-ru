@@ -3,24 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SEO-услуги в {{ city_pp }} | СЕО ГУРУ</title>
+    <title>SEO-услуги в {{ city_pp_seo }} | СЕО ГУРУ</title>
     <meta name="description" content="SEO-услуги в {{ city_pp }}. Бесплатный аудит, прозрачный план работ, рост заявок и доступ к отчетам.">
-    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
+    <meta name="robots" content="{{ robots_content | default('index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1') }}">
     <link rel="canonical" href="https://{{ base_domain }}/{{ city_slug }}/">
     <meta property="og:type" content="website">
     <meta property="og:locale" content="ru_RU">
-    <meta property="og:title" content="SEO-услуги в {{ city_pp }} | СЕО ГУРУ">
+    <meta property="og:title" content="SEO-услуги в {{ city_pp_seo }} | СЕО ГУРУ">
     <meta property="og:description" content="Фокус в {{ city_pp }}: рост заявок без раздувания бюджета.">
     <meta property="og:url" content="https://{{ base_domain }}/{{ city_slug }}/">
     <meta property="og:image" content="https://tashev.ru/img/avatar.jpeg">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="SEO-услуги в {{ city_pp }} | СЕО ГУРУ">
+    <meta name="twitter:title" content="SEO-услуги в {{ city_pp_seo }} | СЕО ГУРУ">
     <meta name="twitter:description" content="Фокус в {{ city_pp }}: рост заявок без раздувания бюджета.">
     <meta name="twitter:image" content="https://tashev.ru/img/avatar.jpeg">
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"SEO-услуги в {{ city_pp }}","url":"https://{{ base_domain }}/{{ city_slug }}/","inLanguage":"ru-RU"}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"SEO-услуги в {{ city_pp_seo }}","url":"https://{{ base_domain }}/{{ city_slug }}/","inLanguage":"ru-RU"}</script>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Главная","item":"https://{{ base_domain }}/"},{"@type":"ListItem","position":2,"name":"{{ city_name }}","item":"https://{{ base_domain }}/{{ city_slug }}/"}]}</script>
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","sameAs":["https://t.me/avitobibot"]}</script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","sameAs":["https://t.me/tashev116"]}</script>
+    <link rel="stylesheet" href="/assets/tailwind.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
         body {
@@ -156,12 +156,7 @@
                 <h2 class="text-2xl font-bold">Направления работы</h2>
                 <div class="h-px bg-gray-800 flex-1 ml-6"></div>
             </div>
-            <div id="servicesGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
-            <div class="text-center mt-8">
-                <button id="loadMoreBtn" class="glass px-6 py-3 rounded-xl border border-indigo-500/30 hover:border-indigo-400/60 transition font-semibold">
-                    Показать ещё ключи
-                </button>
-            </div>
+            <div id="servicesGroups" class="space-y-10"></div>
         </div>
     </section>
 
@@ -212,14 +207,14 @@
                         <p class="text-gray-400 mb-6">Разберем спрос, конкурентов, точки роста и покажем, какие ключи реально дадут заявки по вашему городу.</p>
                         <div class="space-y-2 text-sm text-gray-400">
                             <p>0 ₽ за аудит и первую консультацию</p>
-                            <p>Telegram: <a href="https://t.me/avitobibot" target="_blank" class="text-indigo-300 hover:text-white transition">@avitobibot</a></p>
+                            <p>Telegram: <a href="https://t.me/tashev116" target="_blank" class="text-indigo-300 hover:text-white transition">@tashev116</a></p>
                             <p>Email: hello@x-gu.ru</p>
                         </div>
                     </div>
                     <form id="contactForm" class="space-y-4">
                         <input id="leadName" type="text" required placeholder="Ваше имя" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
                         <input id="leadPhone" type="tel" required placeholder="8 995 095 33 44" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
-                        <input id="leadWebsite" type="url" placeholder="https://example.ru" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
+                        <input id="leadWebsite" type="text" inputmode="url" placeholder="например, tashev.ru" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
                         <button type="submit" class="w-full px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 transition">
                             Получить аудит
                         </button>
@@ -260,7 +255,7 @@
                 <div>
                     <h4 class="text-white font-bold mb-4">Связь</h4>
                     <div class="space-y-2 text-sm text-gray-400">
-                        <p>Telegram: <a href="https://t.me/avitobibot" target="_blank" class="text-indigo-300 hover:text-white transition">@avitobibot</a></p>
+                        <p>Telegram: <a href="https://t.me/tashev116" target="_blank" class="text-indigo-300 hover:text-white transition">@tashev116</a></p>
                         <p>Email: hello@x-gu.ru</p>
                     </div>
                 </div>
@@ -274,28 +269,40 @@
 
     <script>
         const SERVICE_CARDS = {{ service_cards_json | safe }};
-        const grid = document.getElementById('servicesGrid');
-        const btnMore = document.getElementById('loadMoreBtn');
-        let rendered = 0;
-        const chunk = 16;
+        const CLUSTER_LABELS = { seo: 'SEO-продвижение', webdev: 'Создание сайтов', ads: 'Реклама', audit: 'Аудит' };
+        const CLUSTER_ORDER = ['seo', 'webdev', 'ads', 'audit'];
+        const servicesGroups = document.getElementById('servicesGroups');
 
-        function renderServiceChunk() {
-            const next = SERVICE_CARDS.slice(rendered, rendered + chunk);
-            for (const card of next) {
-                const a = document.createElement('a');
-                a.href = card.href;
-                a.className = 'glass-card p-6 rounded-2xl reveal block active';
-                a.innerHTML = `<h3 class=\"text-lg font-bold text-white mb-2\">${card.title}</h3><p class=\"text-sm text-gray-400\">Бесплатный аудит, прозрачный план работ и рост заявок по SEO.</p>`;
-                grid.appendChild(a);
+        (function renderServiceGroups() {
+            const groups = {};
+            for (const card of SERVICE_CARDS) {
+                const c = CLUSTER_LABELS[card.cluster] ? card.cluster : 'seo';
+                (groups[c] = groups[c] || []).push(card);
             }
-            rendered += next.length;
-            if (rendered >= SERVICE_CARDS.length) {
-                btnMore.style.display = 'none';
+            for (const key of CLUSTER_ORDER) {
+                const items = groups[key];
+                if (!items || !items.length) continue;
+                const section = document.createElement('div');
+                section.className = 'reveal active';
+                const head = document.createElement('div');
+                head.className = 'flex items-center gap-3 mb-4';
+                head.innerHTML = `<h3 class=\"text-lg font-bold text-white\">${CLUSTER_LABELS[key]}</h3>`
+                    + `<span class=\"text-xs font-medium text-gray-500 px-2 py-0.5 rounded-full border border-white/10\">${items.length}</span>`
+                    + `<div class=\"h-px bg-gray-800 flex-1\"></div>`;
+                section.appendChild(head);
+                const wrap = document.createElement('div');
+                wrap.className = 'flex flex-wrap gap-2';
+                for (const card of items) {
+                    const a = document.createElement('a');
+                    a.href = card.href;
+                    a.className = 'text-sm text-gray-300 px-3 py-2 rounded-lg border border-white/10 hover:border-indigo-400/60 hover:text-white hover:bg-indigo-500/10 transition';
+                    a.textContent = card.title;
+                    wrap.appendChild(a);
+                }
+                section.appendChild(wrap);
+                servicesGroups.appendChild(section);
             }
-        }
-
-        renderServiceChunk();
-        btnMore.addEventListener('click', renderServiceChunk);
+        })();
 
         function reveal() {
             const reveals = document.querySelectorAll('.reveal');
@@ -365,5 +372,7 @@
             }
         });
     </script>
+    <!-- Виджет чата Эльки -->
+    <script src="https://app.l-ka.ru/widget/loader.js" data-site="st_e8b5e472b977bab7" async></script>
 </body>
 </html>
