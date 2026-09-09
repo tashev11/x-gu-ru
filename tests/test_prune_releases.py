@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "server-opt" / "prune_releases.py"
+SPEC = importlib.util.spec_from_file_location("xgu_prune_releases", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"Cannot load prune module from {MODULE_PATH}")
+prune_releases = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(prune_releases)
+
+
+class PruneReleaseTests(unittest.TestCase):
+    def _release(self, root: Path, name: str, age_seconds: int) -> Path:
+        path = root / name
+        path.mkdir()
+        stamp = time.time() - age_seconds
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_active_release_is_never_in_delete_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            root.mkdir()
+            newest = self._release(root, "r3", 10)
+            active = self._release(root, "r2", 20)
+            oldest = self._release(root, "r1", 30)
+            current = Path(temp) / "current"
+            current.symlink_to(active)
+
+            protected, delete = prune_releases.build_plan(root, current, keep=1)
+
+            self.assertIn(newest.resolve(), protected)
+            self.assertIn(active.resolve(), protected)
+            self.assertNotIn(active.resolve(), delete)
+            self.assertEqual(delete, [oldest.resolve()])
+
+    def test_keep_must_be_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            current = root / "current"
+            with self.assertRaises(ValueError):
+                prune_releases.build_plan(root, current, keep=0)
+
+    def test_safe_delete_rejects_nested_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            nested = root / "release" / "nested"
+            nested.mkdir(parents=True)
+            with self.assertRaises(RuntimeError):
+                prune_releases._safe_delete(nested, root)
+
+
+if __name__ == "__main__":
+    unittest.main()
