@@ -4,18 +4,16 @@
 Safe by default: the command only builds and prints a plan. Real changes to
 robots meta, sitemap and keep-config require ``--apply``.
 
-A JSON policy file may be supplied with ``--policy`` to avoid editing Python
-for routine core changes. Format:
-
-    {"open_cities": ["moskva", ...], "open_services": ["seo-audit-saita", ...]}
-
-If no policy file is supplied, the historical built-in baseline below is used.
-Whitelist URLs are always protected and a missing whitelist is a hard error.
+Normal operation requires a reviewed JSON policy file. The historical built-in
+baseline is retained only as an explicit emergency fallback via
+``--use-builtin-policy``; it is never selected silently.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import shutil
 import sys
@@ -25,9 +23,12 @@ from pathlib import Path
 DEFAULT_WEB_ROOT = Path("/var/www/x-gu.ru/current")
 DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
 DEFAULT_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
+DEFAULT_POLICY = Path(os.getenv("XGU_INDEX_POLICY", "/opt/p3-app/data/index_policy.json"))
 BASE = "https://x-gu.ru"
 
-OPEN_CITIES = [
+# Historical emergency baseline only. Routine production changes must use an
+# external reviewed policy file so this code cannot silently become stale.
+BUILTIN_OPEN_CITIES = [
     "arkhangelsk", "astrakhan", "balakovo", "balashikha", "derbent", "groznyi",
     "iakutsk", "irkutsk", "izhevsk", "kaliningrad", "kirov", "kolomna",
     "krasnodar", "krasnoiarsk", "kursk", "lipetsk", "miass", "moskva",
@@ -41,7 +42,7 @@ OPEN_CITIES = [
     "norilsk", "essentuki", "khasaviurt",
 ]
 
-OPEN_SERVICES = [
+BUILTIN_OPEN_SERVICES = [
     "prodvizhenie-saita", "seo-optimizatsiia-saita",
     "prodvizhenie-internet-magazina", "lokalnoe-prodvizhenie-saita",
     "sbor-semanticheskogo-iadra", "vyvod-saita-iz-pod-filtra",
@@ -60,17 +61,40 @@ INDEX_TAG = (
 )
 
 
-def load_policy(path: Path | None) -> tuple[list[str], list[str]]:
-    if path is None:
-        return list(OPEN_CITIES), list(OPEN_SERVICES)
-    if not path.is_file():
-        raise SystemExit(f"Policy file not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    cities = [str(x).strip() for x in payload.get("open_cities") or [] if str(x).strip()]
-    services = [str(x).strip() for x in payload.get("open_services") or [] if str(x).strip()]
+def _dedupe(values: list[object]) -> list[str]:
+    cleaned = [str(value).strip() for value in values if str(value).strip()]
+    return list(dict.fromkeys(cleaned))
+
+
+def _policy_digest(cities: list[str], services: list[str]) -> str:
+    payload = json.dumps(
+        {"open_cities": cities, "open_services": services},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[str], list[str], str, str]:
+    if use_builtin:
+        cities = list(BUILTIN_OPEN_CITIES)
+        services = list(BUILTIN_OPEN_SERVICES)
+        return cities, services, "builtin-emergency-baseline", _policy_digest(cities, services)
+
+    if path is None or not path.is_file():
+        raise SystemExit(
+            "Reviewed index policy is required. Provide --policy /path/to/index_policy.json "
+            "(recommended) or explicitly use --use-builtin-policy for emergency recovery only."
+        )
+
+    raw = path.read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    cities = _dedupe(list(payload.get("open_cities") or []))
+    services = _dedupe(list(payload.get("open_services") or []))
     if not cities or not services:
         raise SystemExit("Policy must contain non-empty open_cities and open_services")
-    return list(dict.fromkeys(cities)), list(dict.fromkeys(services))
+    return cities, services, str(path.resolve()), _policy_digest(cities, services)
 
 
 def url_for(html: Path, web_root: Path) -> str:
@@ -178,10 +202,19 @@ def apply_page_plan(operations: list[tuple[Path, str]]) -> tuple[int, int]:
     return changed, errors
 
 
-def write_keep_config(path: Path, open_cities: list[str], open_services: list[str]) -> None:
+def write_keep_config(
+    path: Path,
+    open_cities: list[str],
+    open_services: list[str],
+    *,
+    policy_source: str,
+    policy_sha256: str,
+) -> None:
     payload = {
         "open_cities": open_cities,
         "open_services": open_services,
+        "policy_source": policy_source,
+        "policy_sha256": policy_sha256,
         "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -222,7 +255,12 @@ def write_sitemap(web_root: Path, keep: set[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="apply robots/sitemap/config changes")
-    parser.add_argument("--policy", type=Path, default=None, help="JSON open_cities/open_services policy")
+    parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY, help="reviewed JSON open_cities/open_services policy")
+    parser.add_argument(
+        "--use-builtin-policy",
+        action="store_true",
+        help="explicit emergency fallback to the historical built-in policy",
+    )
     parser.add_argument("--web-root", type=Path, default=DEFAULT_WEB_ROOT)
     parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
     parser.add_argument("--keep-config", type=Path, default=DEFAULT_KEEP_CONFIG)
@@ -231,8 +269,13 @@ def main() -> int:
     if not args.web_root.is_dir():
         raise SystemExit(f"Web root not found: {args.web_root}")
 
-    open_cities, open_services = load_policy(args.policy)
+    open_cities, open_services, policy_source, policy_sha256 = load_policy(
+        args.policy,
+        use_builtin=args.use_builtin_policy,
+    )
     keep = build_keep_urls(args.whitelist, open_cities, open_services)
+    print(f"policy source: {policy_source}")
+    print(f"policy sha256: {policy_sha256}")
     print(
         f"policy: cities={len(open_cities)} services={len(open_services)} "
         f"protected/indexable URLs={len(keep)}"
@@ -262,7 +305,13 @@ def main() -> int:
         )
         return 3
 
-    write_keep_config(args.keep_config, open_cities, open_services)
+    write_keep_config(
+        args.keep_config,
+        open_cities,
+        open_services,
+        policy_source=policy_source,
+        policy_sha256=policy_sha256,
+    )
     write_sitemap(args.web_root, keep)
     print(
         f"[APPLIED] page_changes={changed} keep_config={args.keep_config} "
