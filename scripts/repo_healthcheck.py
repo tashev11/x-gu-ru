@@ -30,6 +30,7 @@ WRITE_TO_PRODUCTION_SCRIPTS = (
     "server-opt/sanitize_generated_proof.py",
     "server-opt/deploy_release.py",
     "server-opt/prune_releases.py",
+    "server-opt/install_generator_facade.py",
 )
 
 
@@ -150,9 +151,11 @@ def check_write_safety(failures: list[str]) -> None:
 def check_release_ops(failures: list[str]) -> None:
     deploy_path = ROOT / "server-opt/deploy_release.py"
     prune_path = ROOT / "server-opt/prune_releases.py"
+    install_path = ROOT / "server-opt/install_generator_facade.py"
     disk_path = ROOT / "server-opt/disk-autoclean.sh"
     require(deploy_path.is_file(), "atomic release deploy helper missing", failures)
     require(prune_path.is_file(), "release retention helper missing", failures)
+    require(install_path.is_file(), "generator facade installer missing", failures)
     require(disk_path.is_file(), "disk-autoclean.sh missing", failures)
 
     if deploy_path.is_file():
@@ -166,6 +169,13 @@ def check_release_ops(failures: list[str]) -> None:
         require("if path == active" in prune, "release pruning lacks active-release deletion guard", failures)
         require("resolved.parent != root" in prune, "release pruning can escape releases root", failures)
         require("current.is_symlink()" in prune, "release pruning cannot prove active release", failures)
+
+    if install_path.is_file():
+        installer = install_path.read_text(encoding="utf-8")
+        require("REQUIRED_FILES" in installer and "city_morphology.py" in installer, "generator install set is incomplete", failures)
+        require("Stage every new file before mutating any live target" in installer, "generator installer no longer stages full set first", failures)
+        require("for target in reversed(replaced)" in installer, "generator installer lost rollback loop", failures)
+        require("shutil.copy2(backup, target)" in installer, "generator installer no longer restores backups", failures)
 
     if disk_path.is_file():
         disk = disk_path.read_text(encoding="utf-8")
@@ -183,6 +193,7 @@ def check_ci_and_tests(failures: list[str]) -> None:
         ("tests/test_seo_healthcheck.py", "SEO healthcheck tests missing"),
         ("tests/test_deploy_release.py", "atomic deploy tests missing"),
         ("tests/test_prune_releases.py", "release retention tests missing"),
+        ("tests/test_install_generator_facade.py", "generator installer rollback tests missing"),
     ):
         require((ROOT / test_file).is_file(), message, failures)
     if ci_path.is_file():
@@ -240,6 +251,7 @@ def main() -> int:
     print("  generator and repair tools share city morphology")
     print("  SEO healthcheck is index-policy/sitemap/canonical aware")
     print("  atomic release deploy + safe release retention are guarded")
+    print("  generator facade installation stages + rolls back as a set")
     print("  standalone unit tests are wired into CI")
     print("  canonical repository templates take priority")
     print("  production maintenance scripts require --apply")
