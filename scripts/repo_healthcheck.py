@@ -79,6 +79,16 @@ def check_generator(failures: list[str]) -> None:
     require("рост органики" in facade, "synthetic city KPI sanitizer missing", failures)
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
 
+    canonical_pos = facade.find('here.parent / "server-opt" / "templates"')
+    fallback_pos = facade.find('candidates.append(Path("app/templates"))')
+    require(canonical_pos >= 0, "canonical repository template path missing", failures)
+    require(fallback_pos >= 0, "legacy app/templates compatibility fallback missing", failures)
+    require(
+        canonical_pos >= 0 and fallback_pos >= 0 and canonical_pos < fallback_pos,
+        "generator prefers legacy app/templates over canonical repository templates",
+        failures,
+    )
+
 
 def check_write_safety(failures: list[str]) -> None:
     for rel_path in WRITE_TO_PRODUCTION_SCRIPTS:
@@ -129,6 +139,7 @@ def main() -> int:
     print("Repository healthcheck: OK")
     print("  templates synchronized")
     print("  generator fail-closed/sanitization guards present")
+    print("  canonical repository templates take priority")
     print("  production maintenance scripts require --apply")
     print("  canonical robots/template fixes present")
     print("  nginx canonicalization and hardening present")
