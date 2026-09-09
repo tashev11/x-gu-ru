@@ -1,128 +1,128 @@
-# X-GU.RU — Content & SEO Generator
+# X-GU.RU — Content & SEO Tooling
 
 [![CI](https://github.com/tashev11/x-gu-ru/actions/workflows/ci.yml/badge.svg)](https://github.com/tashev11/x-gu-ru/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 
-Production content generation and SEO optimization suite for [x-gu.ru](https://x-gu.ru) marketplace platform.
+Content generation, SEO auditing, index-management and production support tooling used around [x-gu.ru](https://x-gu.ru).
 
-## Features
+## What is in this repository
 
-- **Content Generator** — Dynamic HTML page generation using Jinja2 templates
-- **SEO Health Check** — Site-wide SEO audit and validation
-- **In-Place SEO Fixes** — Automated on-the-fly fixes for common SEO issues
-- **Sitemap Generation** — Dynamic XML sitemaps for search engine indexing
-- **Server Optimization** — Production deployment and optimization scripts
+- **Content generator** — Python/Jinja2 rendering for service and city pages.
+- **SEO health checks** — title/description/canonical/H1/JSON-LD/indexability checks.
+- **Index-core tooling** — sitemap, whitelist, Yandex Webmaster and Google Search Console utilities.
+- **Production maintenance** — Nginx, fail2ban, disk/zram and carefully scoped repair scripts.
+- **Repository safety checks** — CI verifies syntax, fatal Python errors and critical template/Nginx invariants.
 
-## Project Structure
+## Important architecture note
 
-```
+This repository is the public tooling layer, **not the complete backend application**. Several scripts import a private `app.*` package (`app.core.config`, models and services) that is deployed with x-gu.ru but is not published here. Scripts that require those imports will not run standalone after a fresh clone.
+
+The repository intentionally keeps a root copy of each master template and a production copy under `server-opt/templates/`. They must remain byte-identical; CI fails if they diverge. This is a compatibility arrangement for the current deployment layout, not two independent template versions.
+
+## Project structure
+
+```text
 .
-├── content_generator.py          # Main content generation engine
-├── seo_healthcheck.py            # SEO audit and health report
-├── seo_inplace_fix.py            # Automated SEO fixes
-├── seo_rebuild_broken.py         # Rebuild broken pages
-├── seo_title_extend.py           # SEO title optimization
-├── *_master.html.j2              # Jinja2 HTML templates
-└── server-opt/                   # Server optimization & deployment
-    ├── seo_report.py             # Detailed SEO reporting
+├── .github/workflows/ci.yml       # CI safety gate
+├── .env.example                   # non-secret configuration example
+├── scripts/repo_healthcheck.py    # repository invariant checks
+├── content_generator.py           # content generation engine
+├── seo_healthcheck.py             # deployed HTML SEO audit
+├── seo_inplace_fix.py             # legacy/repair utility; prefer dry-run first
+├── seo_rebuild_broken.py          # targeted page rebuild utility
+├── seo_title_extend.py            # targeted title repair utility
+├── *_master.html.j2               # compatibility copies of master templates
+└── server-opt/
+    ├── templates/                  # production master templates
+    ├── nginx/                      # canonical Nginx configuration
+    ├── seo_report.py               # Yandex + GSC reporting
+    ├── shrink_index.py             # index-core management
+    ├── verify_whitelist.py         # acceptance check for protected URLs
     └── ...
 ```
 
-## Architecture Note
+## Requirements
 
-⚠️ Several scripts (`content_generator.py`, `server-opt/seo_report.py`, etc.) import from an `app.*` package (`app.core.config`, `app.models.*`, `app.services.*`) that is the private backend application for x-gu.ru and is **not included in this repository**. This repo contains the content-generation and SEO tooling layer that runs alongside that backend — it is not a standalone, runnable-out-of-the-box project. It's shared for reference, portfolio, and collaboration purposes.
+- Python **3.11+**
+- PostgreSQL / database configuration supplied by the private backend where required
+- The private `app.*` package for backend-integrated commands
+- Production data files for full rendering/index-management commands
 
-## Setup
+Install the public Python dependencies:
 
-### Prerequisites
-
-- Python 3.9+
-- PostgreSQL (or configured database)
-- SQLAlchemy ORM
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/tashev11/x-gu-ru.git
-   cd x-gu-ru
-   ```
-
-2. Create virtual environment:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. Configure environment:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your actual values
-   ```
-
-5. Prepare data files:
-   ```bash
-   # Place these in data/ directory:
-   # - keywords_all.csv
-   # - keywords_wave_2.csv  
-   # - ru_cities_with_population.csv
-   ```
-
-## Usage
-
-### Generate Content
 ```bash
-python content_generator.py
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
 ```
 
-### Run SEO Health Check
+Never put real credentials in `.env.example` or commit a populated `.env`.
+
+## Data files
+
+Production jobs may use files under `data/`, including:
+
+- `keywords_all.csv`
+- `keywords_wave_2.csv`
+- `keywords_100.csv`
+- `ru_cities_with_population.csv`
+- `index_keep_config.json`
+- `whitelist.txt`
+
+The large/private production datasets are intentionally excluded from Git. Keep versioned schemas or sanitized samples separately if the data format changes.
+
+## Validation
+
+The checks that can run without the private backend are:
+
 ```bash
-python seo_healthcheck.py
+python -m compileall -q .
+python scripts/repo_healthcheck.py
 ```
 
-### Apply SEO Fixes
+GitHub Actions also runs Ruff's fatal-error rules (`E9`, `F63`, `F7`, `F82`).
+
+The repository healthcheck currently protects against several costly regressions:
+
+- root and production templates drifting apart;
+- city hubs ignoring `robots_content`;
+- Tailwind Play CDN returning to production templates;
+- obsolete Telegram/privacy links returning;
+- duplicate/stale Nginx `current/new` configs;
+- loss of the canonical `www -> x-gu.ru` redirect;
+- loss of Nginx server-version hiding, security headers or lead rate limiting.
+
+## Production safety rules
+
+1. Prefer **build -> validate -> release -> switch** over editing thousands of files in `/var/www/x-gu.ru/current` in place.
+2. Run destructive tools in preview/dry-run mode first when such a mode exists.
+3. Keep recent rollback files and logs; cleanup scripts must not truncate active authentication logs.
+4. Validate `nginx -t` before reloading Nginx.
+5. After index-core changes, run `verify_whitelist.py` and the GSC/Yandex audit tools before deleting any closed pages.
+6. Treat `/console` as privileged: the backend must enforce authentication/authorization, or Nginx must restrict it by VPN/IP.
+
+## Nginx deployment
+
+`server-opt/nginx/x-gu.ru.conf` is the **only canonical vhost file in this repository**. Historical `.current` / `.new` copies are deliberately not kept; Git history is the rollback history.
+
+Before applying it on a server:
+
 ```bash
-python seo_inplace_fix.py
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
-### Rebuild Broken Pages
-```bash
-python seo_rebuild_broken.py
-```
-
-## Environment Variables
-
-See `.env.example` for required configuration:
-- `DATABASE_URL` — PostgreSQL connection string
-- `API_KEY_*` — Third-party service credentials
-- `SERVER_HOST`, `SERVER_PORT` — Deployment settings
-
-## Data Files
-
-The following CSV files are required in the `data/` directory:
-- `keywords_all.csv` — Complete keyword list
-- `keywords_wave_2.csv` — Secondary keyword batch
-- `keywords_100.csv` — Top 100 keywords
-- `ru_cities_with_population.csv` — Russian city reference data
+The global `nginx.conf` defines the `lead_submit` rate-limit zone used by the vhost, so deploy the pair together.
 
 ## Security
 
-⚠️ **Important**: Never commit `.env` files or sensitive data. Use `.env.example` as a template.
-
-## Contributing
-
-Issues and pull requests are welcome. For significant changes, please open an issue first to discuss what you'd like to change.
+- Never commit secrets, API tokens, OAuth credentials or real `.env` files.
+- The public lead endpoint is rate-limited at Nginx, but the backend must still validate payloads and apply anti-spam controls.
+- `/console` is proxied to the private backend and must be protected there (or restricted at Nginx).
+- Security-sensitive changes should go through a branch/PR and green CI rather than direct edits to `main`.
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
-
-## Author
-
-Created for the [x-gu.ru](https://x-gu.ru) marketplace platform.
+MIT License — see [LICENSE](LICENSE).
