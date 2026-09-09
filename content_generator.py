@@ -1,7 +1,7 @@
 """Safety facade for the legacy x-gu.ru content generator.
 
 The original implementation is preserved verbatim in
-``_content_generator_legacy.py``.  Keeping it intact makes this hardening
+``_content_generator_legacy.py``. Keeping it intact makes this hardening
 change reviewable while allowing the public entry point to enforce production
 invariants before/after rendering.
 
@@ -10,6 +10,7 @@ Key protections:
 - fail closed when the index keep-config disappears;
 - strip synthetic review/rating schema and synthetic proof sections from
   generated HTML;
+- use one city morphology implementation across render and repair tools;
 - keep all existing public/underscore functions available to callers.
 """
 from __future__ import annotations
@@ -20,6 +21,8 @@ import re
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
+
+from city_morphology import city_prepositional
 
 try:  # Works when this file is installed as app.services.content_generator.
     from . import _content_generator_legacy as _legacy  # type: ignore
@@ -253,6 +256,7 @@ def _render_city_hub_html(*args, **kwargs) -> str:
 _legacy._template_env = _template_env
 _legacy._load_keep_config = _load_keep_config
 _legacy._page_is_open = _page_is_open
+_legacy._city_prepositional = city_prepositional
 _legacy._render_html_landing = _render_html_landing
 _legacy._render_city_hub_html = _render_city_hub_html
 
@@ -262,6 +266,7 @@ globals().update(
         "_template_env": _template_env,
         "_load_keep_config": _load_keep_config,
         "_page_is_open": _page_is_open,
+        "_city_prepositional": city_prepositional,
         "_render_html_landing": _render_html_landing,
         "_render_city_hub_html": _render_city_hub_html,
         "_sanitize_generated_html": _sanitize_generated_html,
