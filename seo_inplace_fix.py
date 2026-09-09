@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""In-place SEO fix: rewrite nominative city forms to prepositional case
-in already-deployed HTML files under /var/www/x-gu.ru/current.
+"""Repair city grammar in already-deployed HTML.
 
-Safe regex strategy: only touch occurrences preceded by ' в ' or ' по '
-(word boundary on the right). This preserves JSON-LD addressLocality,
-breadcrumb labels, URLs, and other nominative uses.
+Safe by default: the command only reports planned replacements. Real writes
+require ``--apply``.
 """
 from __future__ import annotations
 
@@ -62,10 +60,9 @@ def city_prepositional(city_name: str) -> str:
 
 
 def load_cities(pop_min: int = 0) -> list[tuple[str, str, str]]:
-    """Returns [(slug, city_name, prepositional)] for cities where forms differ."""
     rows: list[tuple[str, str, str]] = []
-    with CITIES_CSV.open(encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+    with CITIES_CSV.open(encoding="utf-8") as file:
+        reader = csv.DictReader(file)
         for row in reader:
             try:
                 pop = int((row.get("population") or "0").replace(" ", "").replace("\xa0", ""))
@@ -77,64 +74,44 @@ def load_cities(pop_min: int = 0) -> list[tuple[str, str, str]]:
             city = (row.get("city") or "").strip()
             if not slug or not city:
                 continue
-            pp = city_prepositional(city)
-            rows.append((slug, city, pp))
+            rows.append((slug, city, city_prepositional(city)))
     return rows
 
 
 def build_patterns(city: str, pp: str) -> list[tuple[re.Pattern, str]]:
-    """Return list of (compiled_regex, replacement) for one city.
-
-    Both ' в Cityname' (preposition, should be cityname_pp) and ' по Cityname'
-    (dative misuse, reword to ' в Cityname_pp') are normalized to the
-    prepositional form so the meta tags read naturally.
-
-    The right-hand boundary uses Cyrillic-aware negative lookahead so we
-    don't break inside longer words.
-    """
     cyr = "[А-Яа-яЁё]"
     patterns: list[tuple[re.Pattern, str]] = []
     if city != pp:
-        # " в Cityname" not followed by a Cyrillic letter (word-boundary safe)
         patterns.append((re.compile(rf"(\bв ){re.escape(city)}(?!{cyr})"), rf"\1{pp}"))
-        # " по Cityname" → " в Cityname_pp"
         patterns.append((re.compile(rf"(\b)по {re.escape(city)}(?!{cyr})"), rf"\1в {pp}"))
-        # "в <span ...>Cityname</span>" — H1/heading where city is wrapped in element
         patterns.append((re.compile(rf"(в <[a-z][^>]*>){re.escape(city)}(</[a-z]+>)"), rf"\1{pp}\2"))
-        # FAQ stock phrase "Да. Для Cityname поисковик" → drop the "Для Cityname " prefix
         patterns.append((re.compile(rf"Да\. Для {re.escape(city)} поисковик"), "Да. Поисковик"))
     return patterns
 
 
 def global_patterns() -> list[tuple[re.Pattern, str]]:
-    """Patterns independent of city — applied to every file once."""
     return [
-        # "и региону X" left over from old "по {city_pp} и региону" template; "в Абакане и региону" is awkward
         (re.compile(r" и региону "), " и регионе "),
-        # Unify "Работаем по Cityname" → "Работаем в Cityname" so the sentence reads as prep+prep
-        # consistently with "и регионе Х" that follows. Touches both correctly-cased cities
-        # (Москве, Уфе, Казани) and any leftover dative/prepositional mix.
         (re.compile(r"Работаем по "), "Работаем в "),
     ]
 
 
-def patch_file(path: Path, patterns: list[tuple[re.Pattern, str]], dry_run: bool) -> int:
-    """Apply patterns to file. Return number of replacements made."""
+def patch_file(path: Path, patterns: list[tuple[re.Pattern, str]], apply: bool) -> int:
     text = path.read_text(encoding="utf-8", errors="strict")
     total = 0
     new_text = text
-    for pat, repl in patterns:
-        new_text, n = pat.subn(repl, new_text)
-        total += n
-    if total > 0 and not dry_run:
+    for pattern, replacement in patterns:
+        new_text, count = pattern.subn(replacement, new_text)
+        total += count
+    if total > 0 and apply:
         path.write_text(new_text, encoding="utf-8")
     return total
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--only-slug", default=None, help="Patch only this city slug (testing)")
+    parser.add_argument("--apply", action="store_true", help="actually write changes")
+    parser.add_argument("--only-slug", default=None, help="patch only this city slug")
     parser.add_argument("--pop-min", type=int, default=0)
     parser.add_argument("--root", default=str(ROOT))
     args = parser.parse_args()
@@ -143,36 +120,45 @@ def main() -> int:
     if not root.is_dir():
         print(f"Root not found: {root}", file=sys.stderr)
         return 1
+    if not CITIES_CSV.is_file():
+        print(f"Cities CSV not found: {CITIES_CSV}", file=sys.stderr)
+        return 1
 
     cities = load_cities(args.pop_min)
     print(f"Loaded {len(cities)} cities (pop_min={args.pop_min})")
     if args.only_slug:
-        cities = [c for c in cities if c[0] == args.only_slug]
+        cities = [city for city in cities if city[0] == args.only_slug]
         print(f"Filtered to slug={args.only_slug}: {len(cities)} cities")
 
     files_touched = 0
     files_scanned = 0
     total_repl = 0
-    g_patterns = global_patterns()
+    globals_ = global_patterns()
 
     for slug, city, pp in cities:
         city_dir = root / slug
         if not city_dir.is_dir():
             continue
-        per_city = build_patterns(city, pp)
-        all_patterns = per_city + g_patterns
-        if not all_patterns:
-            continue
+        patterns = build_patterns(city, pp) + globals_
         for html in city_dir.rglob("index.html"):
             files_scanned += 1
-            n = patch_file(html, all_patterns, args.dry_run)
-            if n > 0:
+            count = patch_file(html, patterns, args.apply)
+            if count:
                 files_touched += 1
-                total_repl += n
-        print(f"  {slug:<22} ({city} → {pp}): files={sum(1 for _ in city_dir.rglob('index.html'))} replacements_so_far={total_repl}")
+                total_repl += count
+        print(
+            f"  {slug:<22} ({city} → {pp}): "
+            f"files={sum(1 for _ in city_dir.rglob('index.html'))} "
+            f"replacements_so_far={total_repl}"
+        )
 
-    mode = "DRY-RUN" if args.dry_run else "APPLIED"
-    print(f"\n[{mode}] files_scanned={files_scanned} files_touched={files_touched} replacements={total_repl}")
+    mode = "APPLIED" if args.apply else "DRY-RUN"
+    print(
+        f"\n[{mode}] files_scanned={files_scanned} "
+        f"files_touched={files_touched} replacements={total_repl}"
+    )
+    if not args.apply and total_repl:
+        print("No files changed. Re-run with --apply after reviewing the plan.")
     return 0
 
 
