@@ -40,12 +40,29 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
             self.assertEqual(source, str(policy.resolve()))
             self.assertEqual(len(digest), 64)
 
-    def test_builtin_policy_is_explicit_and_auditable(self) -> None:
+    def test_example_only_policy_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            policy = Path(temp) / "policy.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "example_only": True,
+                        "open_cities": ["moskva"],
+                        "open_services": ["seo-audit-saita"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                shrink.load_policy(policy, use_builtin=False)
+
+    def test_bundled_policy_is_explicit_and_auditable(self) -> None:
         cities, services, source, digest = shrink.load_policy(None, use_builtin=True)
         self.assertGreater(len(cities), 0)
         self.assertGreater(len(services), 0)
-        self.assertEqual(source, "builtin-emergency-baseline")
+        self.assertTrue(source.startswith("bundled-emergency-baseline:"))
         self.assertEqual(len(digest), 64)
+        self.assertTrue(shrink.BUNDLED_BASELINE.is_file())
 
 
 if __name__ == "__main__":
