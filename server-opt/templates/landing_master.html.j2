@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page_title }}</title>
+    <meta name="description" content="{{ meta_description }}">
+    <meta name="robots" content="{{ robots_content }}">
+    <link rel="canonical" href="{{ canonical_url }}">
+    <link rel="alternate" hreflang="ru-RU" href="{{ canonical_url }}">
+    <link rel="alternate" hreflang="x-default" href="{{ canonical_url }}">
+    <meta name="geo.region" content="RU">
+    <meta name="geo.placename" content="{{ city }}, {{ region }}">
+    <meta name="geo.country" content="RU">
+    <meta property="og:locale" content="ru_RU">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="{{ og_title }}">
+    <meta property="og:description" content="{{ og_description }}">
+    <meta property="og:url" content="{{ og_url }}">
+    <meta property="og:image" content="{{ og_image }}">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ og_title }}">
+    <meta name="twitter:description" content="{{ og_description }}">
+    <meta name="twitter:image" content="{{ og_image }}">
+    <script type="application/ld+json">{{ json_ld|safe }}</script>
+    <script type="application/ld+json">{{ faq_json_ld|safe }}</script>
+    <script type="application/ld+json">{{ breadcrumb_json_ld|safe }}</script>
+    <script type="application/ld+json">{{ organization_json_ld|safe }}</script>
+    <script type="application/ld+json">{{ website_json_ld|safe }}</script>
+    <script type="application/ld+json">{{ service_json_ld|safe }}</script>
+    <!-- Yandex.Metrika counter -->
+    <script type="text/javascript">
+        (function(m,e,t,r,i,k,a){
+            m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+            m[i].l=1*new Date();
+            for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+            k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+        })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=107158756', 'ym');
+
+        ym(107158756, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true});
+    </script>
+    <noscript><div><img src="https://mc.yandex.ru/watch/107158756" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
+    <!-- /Yandex.Metrika counter -->
+    <link rel="stylesheet" href="/assets/tailwind.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+
+        .hero-bg {
+            background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 50%, #0f172a 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-bg::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(59, 130, 246, 0.15) 0%, transparent 70%);
+            animation: rotate 30s linear infinite;
+        }
+
+        @keyframes rotate {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .particle {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(59, 130, 246, 0.3);
+            animation: float 20s infinite;
+        }
+
+        @keyframes float {
+            0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.3; }
+            50% { transform: translateY(-100px) rotate(180deg); opacity: 0.6; }
+        }
+
+        .gradient-text {
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: gradient 3s ease infinite;
+        }
+
+        @keyframes gradient {
+            0%, 100% { background-position: 0% center; }
+            50% { background-position: 100% center; }
+        }
+
+        .service-card { transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .service-card:hover {
+            transform: translateY(-10px) scale(1.02);
+            box-shadow: 0 25px 50px -12px rgba(59, 130, 246, 0.25);
+        }
+        .service-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, transparent 100%);
+            opacity: 0;
+            transition: opacity 0.4s;
+        }
+        .service-card:hover::before { opacity: 1; }
+
+        .pulse-btn { animation: pulse 2s infinite; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(59, 130, 246, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+        }
+
+        .offer-badge {
+            background: linear-gradient(135deg, #f59e0b, #ef4444);
+            animation: shimmer 2s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .fade-in {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+
+        .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .counter { font-variant-numeric: tabular-nums; }
+
+        .glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        html { scroll-behavior: smooth; }
+
+        .founder-photo {
+            width: 220px;
+            height: 220px;
+            border-radius: 9999px;
+            object-fit: cover;
+            border: 4px solid rgba(255, 255, 255, 0.35);
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.45);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased overflow-x-hidden">
+
+    <nav class="bg-white/90 backdrop-blur-md shadow-lg fixed w-full z-50 transition-all duration-300" id="navbar">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-20">
+                <div class="flex items-center">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            </svg>
+                        </div>
+                        <span class="text-2xl font-bold"><span class="text-blue-600">СЕО ГУРУ</span><span class="text-gray-800"> в {{ city_pp }}</span></span>
+                    </div>
+                </div>
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="#offer" class="text-gray-600 hover:text-blue-600 transition font-medium">Оффер</a>
+                    <a href="#services" class="text-gray-600 hover:text-blue-600 transition font-medium">Услуги</a>
+                    <a href="#reviews" class="text-gray-600 hover:text-blue-600 transition font-medium">Отзывы</a>
+                    <a href="#pricing" class="text-gray-600 hover:text-blue-600 transition font-medium">Стоимость</a>
+                    <a href="#audit" class="text-gray-600 hover:text-blue-600 transition font-medium">Аудит</a>
+                    <a href="#contact" class="bg-gradient-to-r from-blue-600 to-purple-600 text-white px-6 py-3 rounded-full font-bold hover:shadow-lg hover:shadow-blue-500/50 transition transform hover:scale-105 pulse-btn">
+                        Получить бесплатно
+                    </a>
+                </div>
+                <div class="md:hidden flex items-center">
+                    <button id="mobile-menu-btn" class="text-gray-600 hover:text-blue-600 focus:outline-none">
+                        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div id="mobile-menu" class="hidden md:hidden bg-white border-t">
+            <a href="#offer" class="block px-4 py-3 text-gray-600 hover:bg-gray-50">Оффер</a>
+            <a href="#services" class="block px-4 py-3 text-gray-600 hover:bg-gray-50">Услуги</a>
+            <a href="#reviews" class="block px-4 py-3 text-gray-600 hover:bg-gray-50">Отзывы</a>
+            <a href="#pricing" class="block px-4 py-3 text-gray-600 hover:bg-gray-50">Стоимость</a>
+            <a href="#audit" class="block px-4 py-3 text-gray-600 hover:bg-gray-50">Аудит</a>
+            <a href="#contact" class="block px-4 py-3 text-blue-600 font-bold hover:bg-gray-50">Получить бесплатно</a>
+        </div>
+    </nav>
+
+    <section class="hero-bg min-h-screen flex items-center relative text-white">
+        <div class="particle w-4 h-4" style="top: 20%; left: 10%; animation-delay: 0s;"></div>
+        <div class="particle w-6 h-6" style="top: 60%; left: 80%; animation-delay: 2s;"></div>
+        <div class="particle w-3 h-3" style="top: 40%; left: 60%; animation-delay: 4s;"></div>
+        <div class="particle w-5 h-5" style="top: 80%; left: 30%; animation-delay: 6s;"></div>
+        <div class="particle w-4 h-4" style="top: 30%; left: 90%; animation-delay: 8s;"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 py-32">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
+                <div class="fade-in">
+                    <div class="inline-flex items-center space-x-2 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-full mb-6 border border-white/20">
+                        <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                        <span class="text-sm font-medium">🔥 Специальное предложение</span>
+                    </div>
+
+                    <h1 class="text-4xl md:text-6xl lg:text-7xl font-extrabold leading-tight mb-6">
+                        <span class="gradient-text">{{ hero_line_1 }}</span>
+                        <br>
+                        <span class="text-white">{{ hero_line_2 }}</span>
+                        <br>
+                        <span class="text-yellow-400">{{ hero_line_3 }} в {{ city_pp }}</span>
+                    </h1>
+
+                    <p class="text-xl text-gray-300 mb-8 max-w-xl">
+                        {{ hero_subtitle }}
+                        <span class="text-blue-400 font-semibold">{{ unique_offer_line }}</span>
+                    </p>
+
+                    <div class="flex flex-col sm:flex-row gap-4 mb-8">
+                        <a href="#contact" class="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-4 rounded-xl font-bold text-lg transition shadow-2xl shadow-blue-600/50 transform hover:scale-105 pulse-btn text-center">
+                            Забрать бесплатный сайт
+                        </a>
+                        <a href="#audit" class="glass hover:bg-white/20 text-white px-8 py-4 rounded-xl font-bold text-lg transition border border-white/30 text-center flex items-center justify-center space-x-2">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                            </svg>
+                            <span>{{ secondary_cta_text }}</span>
+                        </a>
+                    </div>
+                    <a href="/{{ city_slug }}/" class="inline-flex items-center text-blue-300 hover:text-blue-200 font-semibold mb-6">
+                        Все услуги в {{ city_pp }}
+                    </a>
+
+                    <div class="flex items-center space-x-8 text-sm text-gray-400">
+                        <div class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            <span>50+ проектов</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            <span>TOP-10 гарантии</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                            </svg>
+                            <span>24/7 поддержка</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="hidden lg:block fade-in" style="transition-delay: 0.2s;">
+                    <div class="relative">
+                        <div class="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 rounded-3xl blur-3xl opacity-30 animate-pulse"></div>
+                        <div class="relative glass rounded-3xl p-8 border border-white/20">
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="bg-white/10 rounded-2xl p-6 text-center">
+                                    <div class="text-4xl font-bold text-blue-400 counter" data-target="{{ counter_1_target }}">0</div>
+                                    <div class="text-sm text-gray-400 mt-2">{{ counter_1_label }}</div>
+                                </div>
+                                <div class="bg-white/10 rounded-2xl p-6 text-center">
+                                    <div class="text-4xl font-bold text-purple-400 counter" data-target="{{ counter_2_target }}">0</div>
+                                    <div class="text-sm text-gray-400 mt-2">{{ counter_2_label }}</div>
+                                </div>
+                                <div class="bg-white/10 rounded-2xl p-6 text-center">
+                                    <div class="text-4xl font-bold text-green-400 counter" data-target="{{ counter_3_target }}">0</div>
+                                    <div class="text-sm text-gray-400 mt-2">{{ counter_3_label }}</div>
+                                </div>
+                                <div class="bg-white/10 rounded-2xl p-6 text-center">
+                                    <div class="text-4xl font-bold text-yellow-400 counter" data-target="{{ counter_4_target }}">0</div>
+                                    <div class="text-sm text-gray-400 mt-2">{{ counter_4_label }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="absolute bottom-10 left-1/2 transform -translate-x-1/2 animate-bounce">
+            <svg class="w-6 h-6 text-white/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/>
+            </svg>
+        </div>
+    </section>
+
+    <section id="offer" class="py-20 bg-gradient-to-br from-blue-600 via-purple-600 to-blue-800 relative overflow-hidden">
+        <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4xIj48Y2lyY2xlIGN4PSIzMCIgY3k9IjMwIiByPSIyIi8+PC9nPjwvZz48L3N2Zz4=')] opacity-30"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="text-center mb-16 fade-in">
+                <div class="inline-block offer-badge text-white px-6 py-2 rounded-full font-bold mb-6">
+                    ⚡ ОГРАНИЧЕННОЕ ПРЕДЛОЖЕНИЕ
+                </div>
+                <h2 class="text-4xl md:text-6xl font-extrabold text-white mb-6">
+                    Сайт <span class="text-yellow-400">БЕСПЛАТНО</span>
+                </h2>
+                <p class="text-xl text-blue-100 max-w-3xl mx-auto">
+                    {{ offer_description }}
+                    <br><span class="text-yellow-400 font-bold">Экономия до 150 000 рублей!</span>
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="glass rounded-2xl p-8 text-center fade-in border border-white/20 hover:border-yellow-400/50 transition">
+                    <div class="w-16 h-16 bg-red-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-4">Обычная цена</h3>
+                    <div class="text-4xl font-bold text-gray-400 line-through mb-2">150 000 ₽</div>
+                    <p class="text-gray-400">за разработку сайта</p>
+                </div>
+
+                <div class="glass rounded-2xl p-8 text-center fade-in border-2 border-yellow-400 relative transform scale-105" style="transition-delay: 0.1s;">
+                    <div class="absolute -top-4 left-1/2 transform -translate-x-1/2">
+                        <span class="bg-yellow-400 text-gray-900 px-4 py-1 rounded-full text-sm font-bold">ВЫГОДА</span>
+                    </div>
+                    <div class="w-16 h-16 bg-yellow-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <svg class="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-4">Ваша цена</h3>
+                    <div class="text-5xl font-bold text-yellow-400 mb-2">0 ₽</div>
+                    <p class="text-yellow-200">при заказе SEO</p>
+                </div>
+
+                <div class="glass rounded-2xl p-8 text-center fade-in border border-white/20 hover:border-green-400/50 transition" style="transition-delay: 0.2s;">
+                    <div class="w-16 h-16 bg-green-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+                        <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold text-white mb-4">Вы получаете</h3>
+                    <div class="text-3xl font-bold text-green-400 mb-2">Сайт + SEO</div>
+                    <p class="text-gray-400">полный комплекс услуг</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="services" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16 fade-in">
+                <h2 class="text-3xl md:text-5xl font-bold text-gray-900 mb-4">
+                    Полный спектр <span class="gradient-text">услуг</span>
+                </h2>
+                <p class="text-gray-600 max-w-2xl mx-auto text-lg">{{ services_subtitle }}</p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <div class="service-card bg-gradient-to-br from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-200 relative p-8 fade-in">
+                    <div class="w-14 h-14 bg-blue-100 rounded-xl flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    </div>
+                    <h3 class="text-2xl font-bold text-gray-900 mb-3">Создание сайта</h3>
+                    <p class="text-gray-600 mb-4">Современные, быстрые и адаптивные сайты, готовые к продвижению с первого дня.</p>
+                    <ul class="space-y-2 text-sm text-gray-500">
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Лендинги и многостраничные</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Адаптивный дизайн</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Высокая скорость загрузки</li>
+                    </ul>
+                </div>
+
+                <div class="service-card bg-gradient-to-br from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-200 relative p-8 fade-in" style="transition-delay: 0.1s;">
+                    <div class="w-14 h-14 bg-purple-100 rounded-xl flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    </div>
+                    <h3 class="text-2xl font-bold text-gray-900 mb-3">SEO Оптимизация</h3>
+                    <p class="text-gray-600 mb-4">Вывод сайта в ТОП поисковых систем. Техническая оптимизация и контент-стратегия.</p>
+                    <ul class="space-y-2 text-sm text-gray-500">
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Аудит и анализ</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Оптимизация контента</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Линкбилдинг</li>
+                    </ul>
+                </div>
+
+                <div class="service-card bg-gradient-to-br from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-200 relative p-8 fade-in" style="transition-delay: 0.2s;">
+                    <div class="w-14 h-14 bg-green-100 rounded-xl flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
+                    </div>
+                    <h3 class="text-2xl font-bold text-gray-900 mb-3">Настройка рекламы</h3>
+                    <p class="text-gray-600 mb-4">Контекстная и таргетированная реклама. Быстрый старт продаж и точное попадание в ЦА.</p>
+                    <ul class="space-y-2 text-sm text-gray-500">
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Яндекс.Директ</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Google Ads</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Таргет в соцсетях</li>
+                    </ul>
+                </div>
+
+                <div class="service-card bg-gradient-to-br from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-200 relative p-8 fade-in">
+                    <div class="w-14 h-14 bg-orange-100 rounded-xl flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    </div>
+                    <h3 class="text-2xl font-bold text-gray-900 mb-3">Автоматизация</h3>
+                    <p class="text-gray-600 mb-4">Внедрение CRM, чат-ботов и сквозной аналитики. Экономим время и увеличиваем конверсию.</p>
+                    <ul class="space-y-2 text-sm text-gray-500">
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>CRM системы</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Чат-боты</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Сквозная аналитика</li>
+                    </ul>
+                </div>
+
+                <div class="service-card bg-gradient-to-br from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-200 relative p-8 fade-in" style="transition-delay: 0.1s;">
+                    <div class="w-14 h-14 bg-pink-100 rounded-xl flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                    </div>
+                    <h3 class="text-2xl font-bold text-gray-900 mb-3">Аналитика</h3>
+                    <p class="text-gray-600 mb-4">Полная прозрачность результатов. Отслеживание всех метрик и ROI ваших вложений.</p>
+                    <ul class="space-y-2 text-sm text-gray-500">
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Яндекс.Метрика</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Google Analytics</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Отчётность</li>
+                    </ul>
+                </div>
+
+                <div class="service-card bg-gradient-to-br from-gray-50 to-white rounded-2xl overflow-hidden border border-gray-200 relative p-8 fade-in" style="transition-delay: 0.2s;">
+                    <div class="w-14 h-14 bg-teal-100 rounded-xl flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636l-3.536 3.536m0 5.656l3.536 3.536M9.172 9.172L5.636 5.636m3.536 9.192l-3.536 3.536M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-5 0a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+                    </div>
+                    <h3 class="text-2xl font-bold text-gray-900 mb-3">Поддержка 24/7</h3>
+                    <p class="text-gray-600 mb-4">Постоянная техническая поддержка и консультации. Мы всегда на связи.</p>
+                    <ul class="space-y-2 text-sm text-gray-500">
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Техподдержка</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Консультации</li>
+                        <li class="flex items-center"><svg class="w-4 h-4 text-green-500 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Обновления</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="fit" class="py-20 bg-slate-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-14 fade-in">
+                <h2 class="text-3xl md:text-5xl font-bold text-gray-900 mb-4">Кому подходит {{ keyword|lower }}</h2>
+                <p class="text-gray-600 text-lg max-w-3xl mx-auto">
+                    Ниже сценарии, где эта посадочная и стратегия дают максимальный эффект по заявкам и видимости.
+                </p>
+            </div>
+            <div class="grid md:grid-cols-3 gap-8">
+                {% for card in audience_cards %}
+                <article class="rounded-2xl border border-gray-200 bg-white p-7 shadow-sm fade-in">
+                    <h3 class="text-xl font-bold text-gray-900 mb-3">{{ card.title }}</h3>
+                    <p class="text-gray-600">{{ card.text }}</p>
+                </article>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <section id="scope" class="py-20 bg-white">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-8 md:p-10 shadow-sm fade-in">
+                <div class="grid lg:grid-cols-2 gap-10 items-start">
+                    <div>
+                        <h2 class="text-3xl md:text-4xl font-bold text-gray-900 mb-4">Что входит в работу</h2>
+                        <p class="text-gray-600 text-lg">
+                            Для направления «{{ keyword }}» в {{ city_pp }} собираем не абстрактный пакет услуг, а конкретный набор внедрений под спрос, структуру и конверсию.
+                        </p>
+                    </div>
+                    <div class="grid gap-4">
+                        {% for item in deliverables %}
+                        <div class="rounded-2xl border border-slate-200 bg-white p-5">
+                            <div class="flex items-start gap-3">
+                                <span class="mt-1 inline-flex w-7 h-7 rounded-full bg-blue-100 text-blue-700 items-center justify-center font-bold">{{ loop.index }}</span>
+                                <p class="text-gray-700">{{ item }}</p>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="audit" class="py-20 bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 relative overflow-hidden">
+        <div class="absolute inset-0">
+            <div class="absolute top-20 left-10 w-72 h-72 bg-blue-500/20 rounded-full blur-3xl animate-pulse"></div>
+            <div class="absolute bottom-20 right-10 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse" style="animation-delay: 1s;"></div>
+        </div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
+                <div class="fade-in">
+                    <div class="inline-flex items-center space-x-2 bg-green-500/20 border border-green-500/30 px-4 py-2 rounded-full mb-6">
+                        <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                        </svg>
+                        <span class="text-green-400 font-medium">100% Бесплатно</span>
+                    </div>
+
+                    <h2 class="text-4xl md:text-5xl font-extrabold text-white mb-6">
+                        Бесплатный <span class="text-yellow-400">SEO аудит</span> сайта
+                    </h2>
+
+                    <p class="text-xl text-gray-300 mb-8">
+                        Получите подробный анализ вашего сайта с рекомендациями по улучшению.
+                        Узнайте, почему ваш сайт не в ТОП и что нужно исправить.
+                    </p>
+
+                    <div class="space-y-4 mb-8">
+                        <div class="flex items-start space-x-4">
+                            <div class="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-semibold">Технический анализ</h4>
+                                <p class="text-gray-400 text-sm">Проверка скорости, мобильной версии, индексации</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start space-x-4">
+                            <div class="w-8 h-8 bg-purple-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-purple-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-semibold">Анализ конкурентов</h4>
+                                <p class="text-gray-400 text-sm">Сравнение с лидерами вашей ниши</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start space-x-4">
+                            <div class="w-8 h-8 bg-green-500/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="text-white font-semibold">План действий</h4>
+                                <p class="text-gray-400 text-sm">Конкретные шаги для улучшения позиций</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <a href="#contact" class="inline-flex items-center space-x-2 bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-gray-900 px-8 py-4 rounded-xl font-bold text-lg transition shadow-lg shadow-yellow-500/30 transform hover:scale-105">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <span>Заказать аудит</span>
+                    </a>
+                </div>
+
+                <div class="fade-in" style="transition-delay: 0.2s;">
+                    <div class="glass rounded-3xl p-8 border border-white/10 relative">
+                        <div class="absolute -top-4 -right-4 w-24 h-24 bg-yellow-500/20 rounded-full blur-2xl"></div>
+
+                        <div class="space-y-6">
+                            <div class="flex items-center justify-between">
+                                <span class="text-gray-400">Ваш сайт</span>
+                                <span class="text-white font-mono">example.ru</span>
+                            </div>
+
+                            <div class="space-y-4">
+                                <div>
+                                    <div class="flex justify-between mb-2">
+                                        <span class="text-gray-400 text-sm">SEO здоровье</span>
+                                        <span class="text-yellow-400 font-bold">65/100</span>
+                                    </div>
+                                    <div class="h-3 bg-gray-700 rounded-full overflow-hidden">
+                                        <div class="h-full bg-gradient-to-r from-yellow-500 to-orange-500 rounded-full" style="width: 65%;"></div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div class="flex justify-between mb-2">
+                                        <span class="text-gray-400 text-sm">Скорость загрузки</span>
+                                        <span class="text-red-400 font-bold">42/100</span>
+                                    </div>
+                                    <div class="h-3 bg-gray-700 rounded-full overflow-hidden">
+                                        <div class="h-full bg-gradient-to-r from-red-500 to-orange-500 rounded-full" style="width: 42%;"></div>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div class="flex justify-between mb-2">
+                                        <span class="text-gray-400 text-sm">Мобильная версия</span>
+                                        <span class="text-green-400 font-bold">88/100</span>
+                                    </div>
+                                    <div class="h-3 bg-gray-700 rounded-full overflow-hidden">
+                                        <div class="h-full bg-gradient-to-r from-green-500 to-teal-500 rounded-full" style="width: 88%;"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                    <div class="pt-6 border-t border-white/10">
+                        <div class="flex items-center space-x-3 text-yellow-400">
+                                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                                    </svg>
+                                    <span class="font-medium">Найдено 23 ошибки</span>
+                                </div>
+                                <p class="text-gray-400 text-sm mt-2">Полный отчёт после заказа аудита</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="reviews" class="py-20 bg-gradient-to-b from-white to-slate-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-14 fade-in">
+                <h2 class="text-3xl md:text-5xl font-bold text-gray-900 mb-4">Отзывы и результат в цифрах</h2>
+                <p class="text-gray-600 text-lg max-w-3xl mx-auto">
+                    Не обещания, а измеримые изменения. По каждому проекту показываю метрики «до/после»
+                    и открываю доступ к отчетам (Яндекс.Метрика, Search Console, позиции и лиды).
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                {% for review in review_cards %}
+                <article class="bg-white rounded-2xl border border-gray-200 shadow-sm p-7 fade-in" {% if loop.index > 1 %}style="transition-delay:.0{{ loop.index - 1 }}s"{% endif %}>
+                    <div class="flex items-center gap-3 mb-3">
+                        <img src="{{ review.avatar }}" alt="{{ review.name }}, клиент" class="w-12 h-12 rounded-full object-cover border border-gray-200">
+                        <div class="flex-1">
+                            <h3 class="text-xl font-bold text-gray-900">{{ review.name }}, {{ review.role }}</h3>
+                            <span class="text-yellow-500 font-bold">{{ review.rating }}</span>
+                        </div>
+                    </div>
+                    <p class="text-sm text-gray-500 mb-4">{{ city }}, {{ review.duration }}</p>
+                    <div class="grid grid-cols-2 gap-3 text-sm mb-5">
+                        <div class="rounded-xl bg-red-50 border border-red-100 p-3">
+                            <p class="text-gray-500">{{ review.before_label }}</p>
+                            <p class="font-semibold text-gray-900">{{ review.before_main }}</p>
+                            <p class="text-gray-500">{{ review.before_sub }}</p>
+                        </div>
+                        <div class="rounded-xl bg-green-50 border border-green-100 p-3">
+                            <p class="text-gray-500">{{ review.after_label }}</p>
+                            <p class="font-semibold text-gray-900">{{ review.after_main }}</p>
+                            <p class="text-gray-500">{{ review.after_sub }}</p>
+                        </div>
+                    </div>
+                    <p class="text-gray-700">«{{ review.quote }}»</p>
+                </article>
+                {% endfor %}
+            </div>
+
+            <div class="mt-10 rounded-2xl bg-slate-900 text-slate-100 p-6 md:p-8 fade-in">
+                <h3 class="text-2xl font-bold mb-3">Прозрачность: доступ к отчетам</h3>
+                <p class="text-slate-300 mb-4">
+                    После старта даю доступ к отчетам и источникам данных: Яндекс.Метрика, Google Search Console,
+                    отчеты по позициям и таблица лидов по месяцам. Вы видите не «красивые слова», а фактическую динамику.
+                </p>
+                <div class="grid md:grid-cols-2 gap-3 mb-5">
+                    {% for point in proof_points %}
+                    <div class="rounded-xl bg-white/5 border border-white/10 px-4 py-3 text-sm text-slate-200">{{ point }}</div>
+                    {% endfor %}
+                </div>
+                <a href="#contact" class="inline-flex items-center gap-2 bg-white text-slate-900 px-5 py-3 rounded-xl font-semibold hover:bg-blue-100 transition">
+                    Запросить пример отчета
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <section id="pricing" class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-14 fade-in">
+                <h2 class="text-3xl md:text-5xl font-bold text-gray-900 mb-4">{{ pricing_title }}</h2>
+                <p class="text-gray-600 text-lg max-w-3xl mx-auto">
+                    {{ pricing_description }}
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <article class="rounded-2xl border border-gray-200 p-7 bg-slate-50 fade-in">
+                    <p class="text-sm text-blue-700 font-semibold mb-2">Аудит и консультация</p>
+                    <h3 class="text-2xl font-bold mb-2">0 ₽</h3>
+                    <p class="text-gray-600 mb-4">Первичная диагностика сайта и стратегии продвижения.</p>
+                    <ul class="space-y-2 text-sm text-gray-700">
+                        <li>Разбор ниши и конкурентов</li>
+                        <li>Список точек роста</li>
+                        <li>План работ на 30 дней</li>
+                    </ul>
+                </article>
+
+                <article class="rounded-2xl border-2 border-blue-500 p-7 bg-white shadow-lg fade-in" style="transition-delay:.08s">
+                    <p class="text-sm text-blue-700 font-semibold mb-2">Базовый пакет SEO</p>
+                    <h3 class="text-2xl font-bold mb-2">15 000 ₽/мес</h3>
+                    <div class="inline-flex items-center px-3 py-1 rounded-full bg-green-100 text-green-800 text-xs font-bold mb-3">
+                        Сайт бесплатно
+                    </div>
+                    <p class="text-gray-600 mb-4">Для старта локального продвижения и первых результатов.</p>
+                    <ul class="space-y-2 text-sm text-gray-700">
+                        <li>Техническая оптимизация</li>
+                        <li>Ключевые страницы под спрос</li>
+                        <li>Ежемесячный мини-отчет</li>
+                    </ul>
+                </article>
+
+                <article class="rounded-2xl border border-gray-200 p-7 bg-slate-50 fade-in" style="transition-delay:.16s">
+                    <p class="text-sm text-blue-700 font-semibold mb-2">Комплексный пакет SEO</p>
+                    <h3 class="text-2xl font-bold mb-2">50 000 ₽/мес</h3>
+                    <div class="inline-flex items-center px-3 py-1 rounded-full bg-green-100 text-green-800 text-xs font-bold mb-3">
+                        Сайт бесплатно
+                    </div>
+                    <p class="text-gray-600 mb-4">Для системного роста заявок и усиления позиций по нише.</p>
+                    <ul class="space-y-2 text-sm text-gray-700">
+                        <li>Полная SEO-стратегия</li>
+                        <li>Контент + коммерческие факторы</li>
+                        <li>Подробная отчетность с доступами</li>
+                    </ul>
+                </article>
+            </div>
+
+        </div>
+    </section>
+
+    <section id="founder" class="py-20 bg-gradient-to-b from-slate-900 to-slate-800 text-white">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="rounded-3xl border border-white/10 bg-white/5 backdrop-blur p-8 md:p-10 shadow-2xl">
+                <div class="grid md:grid-cols-[280px,1fr] gap-8 items-center">
+                    <div class="flex flex-col items-center">
+                        <img src="{{ founder_photo }}" alt="Ринат Ташев" class="founder-photo" />
+                        <span class="mt-4 inline-flex items-center px-3 py-1 rounded-full bg-blue-500/20 text-blue-200 text-sm">Основатель проекта</span>
+                    </div>
+                    <div>
+                        <h3 class="text-3xl md:text-5xl font-extrabold mb-3">Ринат Ташев</h3>
+                        <p class="text-blue-100 text-lg mb-4">Практикующий SEO-стратег и архитектор системного роста органики.</p>
+                        <p class="text-slate-200 leading-relaxed mb-6">
+                            Лично контролирую структуру сайта, коммерческие факторы и контентную стратегию.
+                            {{ founder_focus_line }}
+                        </p>
+                        <div class="flex flex-wrap gap-3 mb-6">
+                            <span class="px-3 py-1 rounded-full bg-white/10 text-sm">10+ лет в SEO</span>
+                            <span class="px-3 py-1 rounded-full bg-white/10 text-sm">50+ проектов</span>
+                            <span class="px-3 py-1 rounded-full bg-white/10 text-sm">Фокус на ROI</span>
+                        </div>
+                        <a href="https://t.me/tashev116" target="_blank" rel="noopener" class="inline-flex items-center gap-2 bg-white text-slate-900 px-6 py-3 rounded-xl font-bold hover:bg-blue-100 transition">
+                            Связаться в Telegram
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="faq" class="py-20 bg-white">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-12 fade-in">
+                <h2 class="text-3xl md:text-5xl font-bold text-gray-900 mb-4">Частые вопросы</h2>
+                <p class="text-gray-600 text-lg">Коротко отвечаем на ключевые вопросы по направлению «{{ keyword }}» в {{ city_pp }}.</p>
+            </div>
+            <div class="space-y-4">
+                {% for faq in faq_items %}
+                <article class="rounded-2xl border border-slate-200 bg-slate-50 p-6 fade-in">
+                    <h3 class="text-xl font-bold text-gray-900 mb-3">{{ faq.question }}</h3>
+                    <p class="text-gray-600">{{ faq.answer }}</p>
+                </article>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <section id="contact" class="py-20 bg-gray-50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16 fade-in">
+                <h2 class="text-3xl md:text-5xl font-bold text-gray-900 mb-4">
+                    Начните <span class="gradient-text">бесплатно</span>
+                </h2>
+                <p class="text-gray-600 max-w-2xl mx-auto text-lg">{{ contact_subtitle }}</p>
+            </div>
+
+            <div class="bg-white rounded-3xl shadow-2xl overflow-hidden fade-in">
+                <div class="grid md:grid-cols-2">
+                    <div class="bg-gradient-to-br from-blue-600 via-purple-600 to-blue-800 p-8 md:p-12 text-white flex flex-col justify-center relative overflow-hidden">
+                        <div class="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                        <div class="absolute bottom-0 left-0 w-48 h-48 bg-yellow-500/20 rounded-full blur-3xl translate-y-1/2 -translate-x-1/2"></div>
+
+                        <div class="relative z-10">
+                            <h3 class="text-3xl font-bold mb-6">Свяжитесь с нами</h3>
+                            <p class="text-blue-100 mb-8">Заполните форму и мы свяжемся с вами в течение 15 минут</p>
+
+                            <div class="space-y-6">
+                                <div class="flex items-center space-x-4">
+                                    <div class="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                                    </div>
+                                    <div>
+                                        <p class="text-blue-200 text-sm">Телефон</p>
+                                        <p class="font-semibold text-lg">8 995 095 33 44</p>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center space-x-4">
+                                    <div class="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                                    </div>
+                                    <div>
+                                        <p class="text-blue-200 text-sm">Telegram</p>
+                                        <p class="font-semibold text-lg"><a href="https://t.me/tashev116" target="_blank" rel="noopener">@tashev116</a></p>
+                                    </div>
+                                </div>
+
+                                <div class="flex items-center space-x-4">
+                                    <div class="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+                                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    </div>
+                                    <div>
+                                        <p class="text-blue-200 text-sm">Время работы</p>
+                                        <p class="font-semibold text-lg">Пн-Вс: 9:00 - 21:00</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="p-8 md:p-12">
+                        <form id="contactForm" class="space-y-6">
+                            <div>
+                                <label for="name" class="block text-sm font-semibold text-gray-700 mb-2">Ваше имя</label>
+                                <input type="text" id="name" required class="w-full rounded-xl border-gray-300 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 bg-gray-50 border-2 p-4 transition" placeholder="Иван Иванов">
+                            </div>
+
+                            <div>
+                                <label for="phone" class="block text-sm font-semibold text-gray-700 mb-2">Телефон</label>
+                                <input type="tel" id="phone" required class="w-full rounded-xl border-gray-300 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 bg-gray-50 border-2 p-4 transition" placeholder="+7 (___) ___-__-__">
+                            </div>
+
+                            <div>
+                                <label for="website" class="block text-sm font-semibold text-gray-700 mb-2">Сайт (если есть)</label>
+                                <input type="text" inputmode="url" id="website" class="w-full rounded-xl border-gray-300 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 bg-gray-50 border-2 p-4 transition" placeholder="например, tashev.ru">
+                            </div>
+
+                            <div>
+                                <label for="service" class="block text-sm font-semibold text-gray-700 mb-2">Что вас интересует?</label>
+                                <select id="service" class="w-full rounded-xl border-gray-300 shadow-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 bg-gray-50 border-2 p-4 transition">
+                                    <option>{{ keyword }}</option>
+                                    <option>Бесплатный сайт + SEO продвижение</option>
+                                    <option>Бесплатный SEO аудит</option>
+                                    <option>Создание сайта</option>
+                                    <option>SEO Оптимизация</option>
+                                    <option>Настройка рекламы</option>
+                                    <option>Автоматизация</option>
+                                    <option>Комплексное продвижение</option>
+                                </select>
+                            </div>
+
+                            <button type="submit" class="w-full flex justify-center items-center space-x-2 py-4 px-6 border border-transparent rounded-xl shadow-lg text-lg font-bold text-white bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition transform hover:scale-105 pulse-btn">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                                <span>Получить бесплатно</span>
+                            </button>
+
+                            <p class="text-xs text-gray-500 text-center">
+                                Нажимая кнопку, вы соглашаетесь с
+                                <a href="/privacy/" class="text-blue-600 hover:underline">политикой конфиденциальности</a>
+                            </p>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="bg-gray-900 text-gray-400 py-16 border-t border-gray-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid md:grid-cols-4 gap-12 mb-12">
+                <div class="col-span-1 md:col-span-2">
+                    <div class="flex items-center space-x-2 mb-4">
+                        <div class="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center">
+                            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        </div>
+                        <span class="text-2xl font-bold text-white">СЕО<span class="text-blue-500">ГУРУ</span></span>
+                    </div>
+                    <p class="text-gray-500 mb-6 max-w-md">{{ footer_blurb }}</p>
+                </div>
+
+                <div>
+                    <h4 class="text-white font-bold mb-4">Услуги</h4>
+                    <ul class="space-y-2">
+                        <li><a href="#services" class="hover:text-blue-400 transition">Создание сайта</a></li>
+                        <li><a href="#services" class="hover:text-blue-400 transition">SEO Оптимизация</a></li>
+                        <li><a href="#services" class="hover:text-blue-400 transition">Контекстная реклама</a></li>
+                        <li><a href="#services" class="hover:text-blue-400 transition">Автоматизация</a></li>
+                        <li><a href="#audit" class="hover:text-blue-400 transition">SEO Аудит</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h4 class="text-white font-bold mb-4">Компания</h4>
+                    <ul class="space-y-2">
+                        <li><a href="#founder" class="hover:text-blue-400 transition">О нас</a></li>
+                        <li><a href="#reviews" class="hover:text-blue-400 transition">Кейсы</a></li>
+                        <li><a href="#reviews" class="hover:text-blue-400 transition">Отзывы</a></li>
+                        <li><a href="#contact" class="hover:text-blue-400 transition">Контакты</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-800 pt-8 flex flex-col md:flex-row justify-between items-center">
+                <p class="text-sm text-gray-500 mb-4 md:mb-0">© 2026 СЕО ГУРУ. Сделано в экосистеме <a class="text-blue-400 hover:text-blue-300" href="https://web.tashev.ru" target="_blank" rel="noopener">web.tashev.ru</a></p>
+                <div class="flex space-x-6 text-sm">
+                    <a href="/privacy/" class="hover:text-blue-400 transition">Политика конфиденциальности</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        const btn = document.getElementById('mobile-menu-btn');
+        const menu = document.getElementById('mobile-menu');
+
+        btn.addEventListener('click', () => {
+            menu.classList.toggle('hidden');
+        });
+
+        const navbar = document.getElementById('navbar');
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 50) {
+                navbar.classList.add('shadow-xl');
+            } else {
+                navbar.classList.remove('shadow-xl');
+            }
+        });
+
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                menu.classList.add('hidden');
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth' });
+                }
+            });
+        });
+
+        const fadeElements = document.querySelectorAll('.fade-in');
+        const fadeInObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('visible');
+                }
+            });
+        }, { threshold: 0.1 });
+        fadeElements.forEach(el => fadeInObserver.observe(el));
+
+        const counters = document.querySelectorAll('.counter');
+        let countersAnimated = false;
+
+        const counterObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting && !countersAnimated) {
+                    countersAnimated = true;
+                    counters.forEach(counter => {
+                        const target = parseInt(counter.getAttribute('data-target'), 10);
+                        const duration = 2000;
+                        const step = target / (duration / 16);
+                        let current = 0;
+
+                        const updateCounter = () => {
+                            current += step;
+                            if (current < target) {
+                                counter.textContent = Math.floor(current);
+                                requestAnimationFrame(updateCounter);
+                            } else {
+                                counter.textContent = target;
+                            }
+                        };
+
+                        updateCounter();
+                    });
+                }
+            });
+        }, { threshold: 0.5 });
+
+        const counterSection = document.querySelector('.counter');
+        if (counterSection) {
+            counterObserver.observe(counterSection);
+        }
+
+        document.getElementById('contactForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const submitBtn = this.querySelector('button[type="submit"]');
+            const originalContent = submitBtn.innerHTML;
+
+            submitBtn.innerHTML = `
+                <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>Отправка...</span>
+            `;
+            submitBtn.disabled = true;
+
+            try {
+                const qs = new URLSearchParams(window.location.search);
+                const payload = {
+                    name: (document.getElementById('name').value || '').trim(),
+                    phone: (document.getElementById('phone').value || '').trim(),
+                    website: (document.getElementById('website').value || '').trim() || null,
+                    service: (document.getElementById('service').value || '').trim() || null,
+                    city: '{{ city }}',
+                    utm_source: qs.get('utm_source'),
+                    utm_medium: qs.get('utm_medium'),
+                    utm_campaign: qs.get('utm_campaign'),
+                    utm_term: qs.get('utm_term'),
+                    utm_content: qs.get('utm_content'),
+                    page_url: window.location.href,
+                    referrer: document.referrer || null
+                };
+
+                const resp = await fetch('/api/v1/leads/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || 'Ошибка отправки');
+
+                submitBtn.innerHTML = `
+                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                    </svg>
+                    <span>Отправлено!</span>
+                `;
+                submitBtn.classList.remove('from-blue-600', 'to-purple-600');
+                submitBtn.classList.add('from-green-600', 'to-teal-600');
+                if (typeof ym === 'function') {
+                    ym(107158756, 'reachGoal', 'lead_submit');
+                }
+
+                setTimeout(() => {
+                    submitBtn.innerHTML = originalContent;
+                    submitBtn.classList.remove('from-green-600', 'to-teal-600');
+                    submitBtn.classList.add('from-blue-600', 'to-purple-600');
+                    submitBtn.disabled = false;
+                    this.reset();
+                    alert('Спасибо! Мы свяжемся с вами в течение 15 минут.');
+                }, 1200);
+            } catch (err) {
+                submitBtn.innerHTML = '<span>Ошибка отправки</span>';
+                submitBtn.classList.remove('from-blue-600', 'to-purple-600');
+                submitBtn.classList.add('from-red-600', 'to-red-700');
+                setTimeout(() => {
+                    submitBtn.innerHTML = originalContent;
+                    submitBtn.classList.remove('from-red-600', 'to-red-700');
+                    submitBtn.classList.add('from-blue-600', 'to-purple-600');
+                    submitBtn.disabled = false;
+                }, 1600);
+            }
+        });
+
+        const phoneInput = document.getElementById('phone');
+        phoneInput.addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length > 0) {
+                if (value[0] === '7' || value[0] === '8') {
+                    value = value.substring(1);
+                }
+                let formatted = '+7 ';
+                if (value.length > 0) formatted += '(' + value.substring(0, 3);
+                if (value.length > 3) formatted += ') ' + value.substring(3, 6);
+                if (value.length > 6) formatted += '-' + value.substring(6, 8);
+                if (value.length > 8) formatted += '-' + value.substring(8, 10);
+                e.target.value = formatted;
+            }
+        });
+    </script>
+    <!-- Виджет чата Эльки -->
+    <script src="https://app.l-ka.ru/widget/loader.js" data-site="st_e8b5e472b977bab7" async></script>
+</body>
+</html>

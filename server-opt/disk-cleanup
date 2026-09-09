@@ -1,0 +1,8 @@
+#!/bin/sh
+# Weekly safety cleanup for a disk-constrained box.
+# Belt-and-suspenders even though apt/fwupd timers are disabled.
+apt-get clean 2>/dev/null || true
+journalctl --vacuum-size=20M >/dev/null 2>&1 || true
+find /var/cache/fwupd -type f -delete 2>/dev/null || true
+find /var/cache/swcatalog -type f -delete 2>/dev/null || true
+exit 0

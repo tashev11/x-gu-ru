@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEO-услуги в {{ city_pp_seo }} | СЕО ГУРУ</title>
+    <meta name="description" content="SEO-услуги в {{ city_pp }}. Бесплатный аудит, прозрачный план работ, рост заявок и доступ к отчетам.">
+    <meta name="robots" content="{{ robots_content | default('index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1') }}">
+    <link rel="canonical" href="https://{{ base_domain }}/{{ city_slug }}/">
+    <meta property="og:type" content="website">
+    <meta property="og:locale" content="ru_RU">
+    <meta property="og:title" content="SEO-услуги в {{ city_pp_seo }} | СЕО ГУРУ">
+    <meta property="og:description" content="Фокус в {{ city_pp }}: рост заявок без раздувания бюджета.">
+    <meta property="og:url" content="https://{{ base_domain }}/{{ city_slug }}/">
+    <meta property="og:image" content="https://tashev.ru/img/avatar.jpeg">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="SEO-услуги в {{ city_pp_seo }} | СЕО ГУРУ">
+    <meta name="twitter:description" content="Фокус в {{ city_pp }}: рост заявок без раздувания бюджета.">
+    <meta name="twitter:image" content="https://tashev.ru/img/avatar.jpeg">
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"CollectionPage","name":"SEO-услуги в {{ city_pp_seo }}","url":"https://{{ base_domain }}/{{ city_slug }}/","inLanguage":"ru-RU"}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Главная","item":"https://{{ base_domain }}/"},{"@type":"ListItem","position":2,"name":"{{ city_name }}","item":"https://{{ base_domain }}/{{ city_slug }}/"}]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","sameAs":["https://t.me/tashev116"]}</script>
+    <link rel="stylesheet" href="/assets/tailwind.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #ffffff;
+            overflow-x: hidden;
+        }
+        .bg-mesh {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: -1;
+            background:
+                radial-gradient(circle at 15% 50%, rgba(79, 70, 229, 0.15), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.1), transparent 25%);
+            filter: blur(60px);
+            animation: meshMove 20s ease-in-out infinite alternate;
+        }
+        @keyframes meshMove { 0% { transform: scale(1); } 100% { transform: scale(1.1); } }
+        .glass {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+        }
+        .glass-card {
+            background: linear-gradient(145deg, rgba(30, 41, 59, 0.6), rgba(15, 23, 42, 0.6));
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .glass-card:hover {
+            border-color: rgba(99, 102, 241, 0.5);
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px -5px rgba(79, 70, 229, 0.2);
+            background: linear-gradient(145deg, rgba(30, 41, 59, 0.8), rgba(15, 23, 42, 0.8));
+        }
+        .text-gradient {
+            background: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .reveal {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: all 0.8s ease-out;
+        }
+        .reveal.active { opacity: 1; transform: translateY(0); }
+        .faq-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s cubic-bezier(0, 1, 0, 1);
+        }
+        .faq-item.active .faq-content {
+            max-height: 220px;
+            transition: max-height 0.4s cubic-bezier(1, 0, 1, 0);
+        }
+        .faq-icon { transition: transform 0.3s ease; }
+        .faq-item.active .faq-icon { transform: rotate(180deg); color: #818cf8; }
+    </style>
+</head>
+<body class="antialiased selection:bg-indigo-500 selection:text-white">
+    <div class="bg-mesh"></div>
+
+    <nav class="fixed w-full z-50 py-4" id="navbar">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="glass rounded-2xl px-6 py-3 flex justify-between items-center">
+                <a href="/" class="flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-lg flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <span class="text-xl font-black text-white">СЕО <span class="text-gradient">ГУРУ</span></span>
+                </a>
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="#services" class="text-gray-300 hover:text-white transition text-sm font-medium">Направления</a>
+                    <a href="#pricing" class="text-gray-300 hover:text-white transition text-sm font-medium">Стоимость</a>
+                    <a href="#faq" class="text-gray-300 hover:text-white transition text-sm font-medium">FAQ</a>
+                    <a href="#contact" class="glass px-5 py-2 rounded-full text-sm font-bold border border-indigo-500/30 hover:border-indigo-400/60 transition">Аудит</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <header class="pt-32 pb-16 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="reveal">
+                <div class="inline-flex items-center space-x-2 glass px-4 py-2 rounded-full mb-6 border border-indigo-500/30">
+                    <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+                    <span class="text-sm font-medium text-indigo-200">СЕО ГУРУ — {{ city_name }}</span>
+                </div>
+                <h1 class="text-4xl md:text-6xl font-black mb-6 leading-tight">
+                    SEO-услуги в <span class="text-gradient">{{ city_pp }}</span>
+                </h1>
+                <p class="text-xl text-gray-400 max-w-3xl leading-relaxed">
+                    Фокус в {{ city_pp }}: рост заявок без раздувания рекламного бюджета. Выберите направление и получите бесплатный аудит.
+                    Показатели «до/после», доступ к отчетам и фиксированный план работ.
+                </p>
+            </div>
+        </div>
+    </header>
+
+    <section class="py-12 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 reveal">
+                <div class="glass-card rounded-2xl p-6 text-center border-t-4 border-t-indigo-500">
+                    <div class="text-4xl font-black text-white mb-2">+{{ growth }}%</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wide">рост органики</div>
+                </div>
+                <div class="glass-card rounded-2xl p-6 text-center border-t-4 border-t-purple-500">
+                    <div class="text-4xl font-black text-white mb-2">{{ leads }}</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wide">лидов / мес</div>
+                </div>
+                <div class="glass-card rounded-2xl p-6 text-center border-t-4 border-t-pink-500">
+                    <div class="text-4xl font-black text-white mb-2">-{{ cpl_drop }}%</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wide">снижение CPL</div>
+                </div>
+                <div class="glass-card rounded-2xl p-6 text-center border-t-4 border-t-amber-500">
+                    <div class="text-4xl font-black text-white mb-2">{{ idx_days }} дн.</div>
+                    <div class="text-sm text-gray-400 uppercase tracking-wide">до первых сигналов</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="services" class="py-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between mb-8 reveal">
+                <h2 class="text-2xl font-bold">Направления работы</h2>
+                <div class="h-px bg-gray-800 flex-1 ml-6"></div>
+            </div>
+            <div id="servicesGroups" class="space-y-10"></div>
+        </div>
+    </section>
+
+    <section id="pricing" class="py-16">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="glass rounded-3xl p-8 md:p-12 border border-indigo-500/30 relative overflow-hidden reveal">
+                <div class="absolute top-0 right-0 w-64 h-64 bg-indigo-600/20 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
+                <h2 class="text-3xl font-bold mb-8 relative z-10">Стоимость продвижения</h2>
+                <div class="space-y-6 relative z-10">
+                    <div class="flex flex-col sm:flex-row justify-between items-center p-4 rounded-xl bg-white/5 border border-white/5">
+                        <span class="text-lg font-medium">Аудит и консультация</span>
+                        <span class="text-2xl font-bold text-green-400">0 ₽</span>
+                    </div>
+                    <div class="flex flex-col sm:flex-row justify-between items-center p-4 rounded-xl bg-white/5 border border-white/5">
+                        <span class="text-lg font-medium">Базовый пакет SEO</span>
+                        <span class="text-2xl font-bold text-indigo-400">15 000 ₽<span class="text-sm text-gray-500 font-normal">/мес</span></span>
+                    </div>
+                    <div class="flex flex-col sm:flex-row justify-between items-center p-4 rounded-xl bg-gradient-to-r from-indigo-900/50 to-purple-900/50 border border-indigo-500/30">
+                        <span class="text-lg font-medium">Комплексный пакет SEO</span>
+                        <span class="text-2xl font-bold text-amber-400">50 000 ₽<span class="text-sm text-gray-500 font-normal">/мес</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="faq" class="py-16">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold mb-12 text-center reveal">Как работаем</h2>
+            <div class="relative">
+                <div class="absolute left-8 top-0 bottom-0 w-0.5 bg-gradient-to-b from-indigo-500 via-purple-500 to-transparent"></div>
+                <div class="space-y-12">
+                    <div class="relative flex items-start group reveal"><div class="absolute left-0 w-16 h-16 glass rounded-2xl flex items-center justify-center border border-indigo-500/30 z-10"><span class="text-2xl font-black text-indigo-400">1</span></div><div class="ml-24 pt-4"><h3 class="text-xl font-bold text-white mb-2">Бесплатный аудит и согласование KPI</h3><p class="text-gray-400">Анализируем текущее состояние сайта и определяем целевые показатели.</p></div></div>
+                    <div class="relative flex items-start group reveal"><div class="absolute left-0 w-16 h-16 glass rounded-2xl flex items-center justify-center border border-purple-500/30 z-10"><span class="text-2xl font-black text-purple-400">2</span></div><div class="ml-24 pt-4"><h3 class="text-xl font-bold text-white mb-2">Техоптимизация и структура страниц</h3><p class="text-gray-400">Исправляем ошибки и строим структуру под поисковый спрос.</p></div></div>
+                    <div class="relative flex items-start group reveal"><div class="absolute left-0 w-16 h-16 glass rounded-2xl flex items-center justify-center border border-pink-500/30 z-10"><span class="text-2xl font-black text-pink-400">3</span></div><div class="ml-24 pt-4"><h3 class="text-xl font-bold text-white mb-2">Контент и рост позиций</h3><p class="text-gray-400">Усиливаем страницы под ключевые запросы и коммерческие интенты.</p></div></div>
+                    <div class="relative flex items-start group reveal"><div class="absolute left-0 w-16 h-16 glass rounded-2xl flex items-center justify-center border border-amber-500/30 z-10"><span class="text-2xl font-black text-amber-400">4</span></div><div class="ml-24 pt-4"><h3 class="text-xl font-bold text-white mb-2">Отчетность и масштабирование</h3><p class="text-gray-400">Прозрачные отчеты и контроль динамики по заявкам и позициям.</p></div></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section id="contact" class="py-16">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="glass rounded-3xl p-8 border border-indigo-500/20 reveal">
+                <div class="grid md:grid-cols-2 gap-8 items-center">
+                    <div>
+                        <h2 class="text-3xl font-bold mb-4">Получить аудит в {{ city_pp }}</h2>
+                        <p class="text-gray-400 mb-6">Разберем спрос, конкурентов, точки роста и покажем, какие ключи реально дадут заявки по вашему городу.</p>
+                        <div class="space-y-2 text-sm text-gray-400">
+                            <p>0 ₽ за аудит и первую консультацию</p>
+                            <p>Telegram: <a href="https://t.me/tashev116" target="_blank" class="text-indigo-300 hover:text-white transition">@tashev116</a></p>
+                            <p>Email: hello@x-gu.ru</p>
+                        </div>
+                    </div>
+                    <form id="contactForm" class="space-y-4">
+                        <input id="leadName" type="text" required placeholder="Ваше имя" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
+                        <input id="leadPhone" type="tel" required placeholder="8 995 095 33 44" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
+                        <input id="leadWebsite" type="text" inputmode="url" placeholder="например, tashev.ru" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none">
+                        <button type="submit" class="w-full px-6 py-3 rounded-xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 transition">
+                            Получить аудит
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="py-16">
+        <div class="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="glass rounded-3xl p-8 border border-white/5 reveal">
+                <h2 class="text-2xl font-bold mb-8 text-center">Частые вопросы по продвижению в {{ city_pp }}</h2>
+                <div class="space-y-4">
+                    <div class="faq-item border-b border-white/10 pb-4"><button class="w-full flex justify-between items-center py-4 text-left focus:outline-none" onclick="toggleFaq(this)"><span class="font-semibold text-lg">Когда будут первые заявки?</span><svg class="faq-icon w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button><div class="faq-content"><div class="pb-4 text-gray-400">Первые сигналы обычно появляются через 2-3 недели после старта. Стабильный поток формируется в течение 2-4 месяцев.</div></div></div>
+                    <div class="faq-item border-b border-white/10 pb-4"><button class="w-full flex justify-between items-center py-4 text-left focus:outline-none" onclick="toggleFaq(this)"><span class="font-semibold text-lg">Какая стоимость работ?</span><svg class="faq-icon w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button><div class="faq-content"><div class="pb-4 text-gray-400">0 ₽ — аудит и консультация. Далее пакет 15 000 ₽/мес или 50 000 ₽/мес по целям проекта.</div></div></div>
+                    <div class="faq-item"><button class="w-full flex justify-between items-center py-4 text-left focus:outline-none" onclick="toggleFaq(this)"><span class="font-semibold text-lg">Как контролировать результат?</span><svg class="faq-icon w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg></button><div class="faq-content"><div class="pb-4 text-gray-400">Вы получаете доступ к отчетам и основным метрикам. Все этапы фиксируются и согласуются заранее.</div></div></div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer class="border-t border-white/10 py-14 bg-black/30 mt-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid md:grid-cols-3 gap-10">
+                <div>
+                    <span class="text-xl font-bold text-white">СЕО <span class="text-gradient">ГУРУ</span></span>
+                    <p class="text-sm text-gray-400 mt-3">Региональное SEO-продвижение и рост заявок по городам России.</p>
+                </div>
+                <div>
+                    <h4 class="text-white font-bold mb-4">Навигация</h4>
+                    <div class="space-y-2 text-sm">
+                        <a href="/" class="block text-gray-400 hover:text-white transition">Главная</a>
+                        <a href="#pricing" class="block text-gray-400 hover:text-white transition">Тарифы</a>
+                        <a href="#contact" class="block text-gray-400 hover:text-white transition">Контакты</a>
+                    </div>
+                </div>
+                <div>
+                    <h4 class="text-white font-bold mb-4">Связь</h4>
+                    <div class="space-y-2 text-sm text-gray-400">
+                        <p>Telegram: <a href="https://t.me/tashev116" target="_blank" class="text-indigo-300 hover:text-white transition">@tashev116</a></p>
+                        <p>Email: hello@x-gu.ru</p>
+                    </div>
+                </div>
+            </div>
+            <div class="border-t border-white/10 mt-10 pt-6 flex flex-col md:flex-row items-center justify-between gap-3 text-sm text-gray-500">
+                <p>&copy; 2026 Все права защищены</p>
+                <p>Сделано в экосистеме <a href="https://web.tashev.ru" target="_blank" class="text-amber-300 hover:text-white transition">web.tashev.ru</a></p>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        const SERVICE_CARDS = {{ service_cards_json | safe }};
+        const CLUSTER_LABELS = { seo: 'SEO-продвижение', webdev: 'Создание сайтов', ads: 'Реклама', audit: 'Аудит' };
+        const CLUSTER_ORDER = ['seo', 'webdev', 'ads', 'audit'];
+        const servicesGroups = document.getElementById('servicesGroups');
+
+        (function renderServiceGroups() {
+            const groups = {};
+            for (const card of SERVICE_CARDS) {
+                const c = CLUSTER_LABELS[card.cluster] ? card.cluster : 'seo';
+                (groups[c] = groups[c] || []).push(card);
+            }
+            for (const key of CLUSTER_ORDER) {
+                const items = groups[key];
+                if (!items || !items.length) continue;
+                const section = document.createElement('div');
+                section.className = 'reveal active';
+                const head = document.createElement('div');
+                head.className = 'flex items-center gap-3 mb-4';
+                head.innerHTML = `<h3 class=\"text-lg font-bold text-white\">${CLUSTER_LABELS[key]}</h3>`
+                    + `<span class=\"text-xs font-medium text-gray-500 px-2 py-0.5 rounded-full border border-white/10\">${items.length}</span>`
+                    + `<div class=\"h-px bg-gray-800 flex-1\"></div>`;
+                section.appendChild(head);
+                const wrap = document.createElement('div');
+                wrap.className = 'flex flex-wrap gap-2';
+                for (const card of items) {
+                    const a = document.createElement('a');
+                    a.href = card.href;
+                    a.className = 'text-sm text-gray-300 px-3 py-2 rounded-lg border border-white/10 hover:border-indigo-400/60 hover:text-white hover:bg-indigo-500/10 transition';
+                    a.textContent = card.title;
+                    wrap.appendChild(a);
+                }
+                section.appendChild(wrap);
+                servicesGroups.appendChild(section);
+            }
+        })();
+
+        function reveal() {
+            const reveals = document.querySelectorAll('.reveal');
+            for (let i = 0; i < reveals.length; i++) {
+                const windowHeight = window.innerHeight;
+                const elementTop = reveals[i].getBoundingClientRect().top;
+                if (elementTop < windowHeight - 100) reveals[i].classList.add('active');
+            }
+        }
+        window.addEventListener('scroll', reveal);
+        reveal();
+
+        window.addEventListener('scroll', () => {
+            const nav = document.getElementById('navbar');
+            if (window.scrollY > 50) {
+                nav.classList.add('bg-slate-900/90');
+            } else {
+                nav.classList.remove('bg-slate-900/90');
+            }
+        });
+
+        function toggleFaq(button) {
+            const item = button.parentElement;
+            const isActive = item.classList.contains('active');
+            document.querySelectorAll('.faq-item').forEach(el => el.classList.remove('active'));
+            if (!isActive) item.classList.add('active');
+        }
+
+        document.getElementById('contactForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const btn = this.querySelector('button');
+            const originalText = btn.textContent;
+            btn.textContent = 'Отправка...';
+            btn.disabled = true;
+
+            const payload = {
+                name: document.getElementById('leadName').value.trim(),
+                phone: document.getElementById('leadPhone').value.trim(),
+                website: document.getElementById('leadWebsite').value.trim() || null,
+                service: 'SEO аудит',
+                city: '{{ city_name }}',
+                page_url: window.location.href,
+                referrer: document.referrer || null,
+            };
+
+            try {
+                const resp = await fetch('/api/v1/leads/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.ok) {
+                    throw new Error(data.detail || 'submit failed');
+                }
+                btn.textContent = 'Отправлено';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                    this.reset();
+                }, 1200);
+            } catch (err) {
+                btn.textContent = originalText;
+                btn.disabled = false;
+                console.error(err);
+                alert('Не удалось отправить заявку');
+            }
+        });
+    </script>
+    <!-- Виджет чата Эльки -->
+    <script src="https://app.l-ka.ru/widget/loader.js" data-site="st_e8b5e472b977bab7" async></script>
+</body>
+</html>

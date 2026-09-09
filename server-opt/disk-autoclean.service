@@ -1,0 +1,6 @@
+[Unit]
+Description=Threshold-triggered disk cleanup (skip if free space is OK)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/disk-autoclean.sh

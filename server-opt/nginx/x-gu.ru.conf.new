@@ -1,0 +1,77 @@
+server {
+    server_name x-gu.ru;
+
+    root /var/www/x-gu.ru/current;
+    index index.html;
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:9000/api/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+
+    location /console {
+        proxy_pass http://127.0.0.1:9000/console;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Long cache for immutable static assets (fonts, images, css, js).
+    location ~* \.(?:css|js|mjs|woff2?|ttf|otf|eot|jpg|jpeg|png|gif|webp|avif|svg|ico)$ {
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+        access_log off;
+        try_files $uri =404;
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    listen [::]:443 ssl ipv6only=on; # managed by Certbot
+    listen 443 ssl; # managed by Certbot
+    http2 on; # perf: enable HTTP/2 multiplexing
+    ssl_certificate /etc/letsencrypt/live/x-gu.ru/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/x-gu.ru/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+
+}
+
+# SEO: canonical host is the bare domain. www served content (HTTP 200) and
+# Google accumulated ~322 duplicate www URLs; redirect them permanently.
+server {
+    listen [::]:443 ssl;
+    listen 443 ssl;
+    http2 on;
+    server_name www.x-gu.ru;
+
+    ssl_certificate /etc/letsencrypt/live/x-gu.ru/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/x-gu.ru/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+
+    return 301 https://x-gu.ru$request_uri;
+}
+
+server {
+    # single hop: www:80 and x-gu.ru:80 both land on https://x-gu.ru
+    if ($host = www.x-gu.ru) {
+        return 301 https://x-gu.ru$request_uri;
+    }
+
+    if ($host = x-gu.ru) {
+        return 301 https://x-gu.ru$request_uri;
+    }
+
+    listen 80;
+    listen [::]:80;
+    server_name x-gu.ru www.x-gu.ru;
+    return 404; # managed by Certbot
+}
