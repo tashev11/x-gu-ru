@@ -11,7 +11,13 @@ from seo_healthcheck import run_audit
 BASE = "https://example.test"
 
 
-def page_html(*, canonical: str, noindex: bool = False) -> str:
+def page_html(
+    *,
+    canonical: str,
+    noindex: bool = False,
+    extra_html: str = "",
+    jsonld: str = '{"@context":"https://schema.org","@type":"WebPage"}',
+) -> str:
     robots = "noindex, follow" if noindex else "index,follow"
     body = " ".join(["контент"] * 260)
     return f"""<!doctype html>
@@ -24,9 +30,9 @@ def page_html(*, canonical: str, noindex: bool = False) -> str:
   <link href="{canonical}" rel="canonical">
   <meta content="Тест" property="og:title">
   <meta content="Описание" property="og:description">
-  <script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebPage"}}</script>
+  <script type="application/ld+json">{jsonld}</script>
 </head>
-<body><h1>Тестовая страница</h1><p>{body}</p></body>
+<body><h1>Тестовая страница</h1><p>{body}</p>{extra_html}</body>
 </html>"""
 
 
@@ -37,7 +43,8 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         (root / "moskva").mkdir()
         (root / "tula").mkdir()
         (root / "moskva" / "index.html").write_text(
-            page_html(canonical=f"{BASE}/moskva/"), encoding="utf-8"
+            page_html(canonical=f"{BASE}/moskva/", extra_html='<a href="/tula/">Тула</a>'),
+            encoding="utf-8",
         )
         (root / "tula" / "index.html").write_text(
             page_html(canonical=f"{BASE}/tula/", noindex=True), encoding="utf-8"
@@ -66,6 +73,8 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         self.assertEqual(stats["open_missing_sitemap"], 0)
         self.assertEqual(stats["closed_in_sitemap"], 0)
         self.assertEqual(stats["canonical_url_mismatch"], 0)
+        self.assertEqual(stats["broken_internal_links"], 0)
+        self.assertEqual(stats["invalid_jsonld_pages"], 0)
 
     def test_detects_robots_and_sitemap_inversions(self) -> None:
         root, policy, whitelist, temp = self._fixture()
@@ -96,6 +105,41 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         self.assertEqual(stats["missing_canonical"], 0)
         self.assertEqual(stats["missing_og_title"], 0)
         self.assertEqual(stats["missing_og_description"], 0)
+
+    def test_detects_broken_internal_link(self) -> None:
+        root, policy, whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        (root / "moskva" / "index.html").write_text(
+            page_html(
+                canonical=f"{BASE}/moskva/",
+                extra_html='<a href="/does-not-exist/">битая ссылка</a>',
+            ),
+            encoding="utf-8",
+        )
+        audit = run_audit(root, base_url=BASE, keep_config=policy, whitelist=whitelist)
+        self.assertEqual(audit["stats"]["broken_internal_links"], 1)
+        self.assertEqual(audit["stats"]["pages_with_broken_internal_links"], 1)
+
+    def test_detects_invalid_jsonld(self) -> None:
+        root, policy, whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        (root / "moskva" / "index.html").write_text(
+            page_html(canonical=f"{BASE}/moskva/", jsonld='{"@type":'),
+            encoding="utf-8",
+        )
+        audit = run_audit(root, base_url=BASE, keep_config=policy, whitelist=whitelist)
+        self.assertEqual(audit["stats"]["invalid_jsonld_pages"], 1)
+        self.assertEqual(audit["stats"]["invalid_jsonld_blocks"], 1)
+
+    def test_detects_duplicate_canonical(self) -> None:
+        root, policy, whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        (root / "tula" / "index.html").write_text(
+            page_html(canonical=f"{BASE}/moskva/", noindex=True), encoding="utf-8"
+        )
+        audit = run_audit(root, base_url=BASE, keep_config=policy, whitelist=whitelist)
+        self.assertEqual(audit["duplicates"]["canonical_duplicate_pages"], 2)
+        self.assertEqual(audit["duplicates"]["canonical_duplicate_groups"], 1)
 
 
 if __name__ == "__main__":
