@@ -22,7 +22,10 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from city_morphology import city_prepositional
+try:  # Private-backend package install: app.services.content_generator.
+    from .city_morphology import city_prepositional  # type: ignore
+except ImportError:  # Public-repository/root execution.
+    from city_morphology import city_prepositional
 
 try:  # Works when this file is installed as app.services.content_generator.
     from . import _content_generator_legacy as _legacy  # type: ignore
