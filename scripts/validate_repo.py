@@ -2,13 +2,13 @@
 """Run all repository checks that do not require the private backend.
 
 This is the local equivalent of GitHub Actions validation. It intentionally
-uses only repository files plus Ruff, so it can run on a workstation or the
-server even when GitHub-hosted runners are unavailable.
+uses only repository files plus the Ruff CLI, so it can run on a workstation
+or the server even when GitHub-hosted runners are unavailable.
 """
 from __future__ import annotations
 
 import argparse
-import importlib.util
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -42,10 +42,12 @@ def main() -> int:
     ]
 
     if not args.skip_ruff:
-        if importlib.util.find_spec("ruff") is None:
+        ruff = shutil.which("ruff")
+        if ruff is None:
             print(
-                "Ruff is not installed. Install it with `python -m pip install ruff` "
-                "or use --skip-ruff only for a limited local check.",
+                "Ruff CLI is not available in PATH. Install it with "
+                "`python -m pip install ruff` or use --skip-ruff only for a "
+                "limited local check.",
                 file=sys.stderr,
             )
             return 2
@@ -53,9 +55,7 @@ def main() -> int:
             (
                 "Fatal Python errors",
                 [
-                    sys.executable,
-                    "-m",
-                    "ruff",
+                    ruff,
                     "check",
                     ".",
                     "--select",
