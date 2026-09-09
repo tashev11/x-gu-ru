@@ -80,7 +80,8 @@ def check_generator(failures: list[str]) -> None:
     require('payload.get("@type") == "LocalBusiness"' in facade, "generated LocalBusiness sanitizer missing", failures)
     require("рост органики" in facade, "synthetic city KPI sanitizer missing", failures)
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
-    require("city_morphology import city_prepositional" in facade, "generator does not import shared city morphology", failures)
+    require("from .city_morphology import city_prepositional" in facade, "private-backend relative morphology import missing", failures)
+    require("from city_morphology import city_prepositional" in facade, "root-execution morphology fallback missing", failures)
     require("_legacy._city_prepositional = city_prepositional" in facade, "legacy render path is not patched to shared city morphology", failures)
 
     canonical_pos = facade.find('here.parent / "server-opt" / "templates"')
@@ -222,9 +223,9 @@ def check_ci_and_tests(failures: list[str]) -> None:
     if validator_path.is_file():
         validator = validator_path.read_text(encoding="utf-8")
         for token, message in (
-            ("-m\", \"compileall", "shared validator lost Python compile check"),
-            ("-m\", \"ruff", "shared validator lost Ruff fatal-error check"),
-            ("-m\", \"unittest", "shared validator lost unit tests"),
+            ('"-m", "compileall"', "shared validator lost Python compile check"),
+            ('"-m", "ruff"', "shared validator lost Ruff fatal-error check"),
+            ('"-m", "unittest"', "shared validator lost unit tests"),
             ("scripts/repo_healthcheck.py", "shared validator lost repository invariant checks"),
         ):
             require(token in validator, message, failures)
@@ -276,6 +277,7 @@ def main() -> int:
     print("Repository healthcheck: OK")
     print("  templates synchronized")
     print("  generator fail-closed/sanitization guards present")
+    print("  generator supports both package and root morphology imports")
     print("  generator and repair tools share city morphology")
     print("  SEO healthcheck covers index policy, sitemap, canonical, JSON-LD and internal links")
     print("  reviewed index policy is external/versioned and auditable")
