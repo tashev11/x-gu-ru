@@ -16,6 +16,19 @@ TEMPLATE_NAMES = (
     "homepage_master.html.j2",
 )
 
+WRITE_TO_PRODUCTION_SCRIPTS = (
+    "seo_inplace_fix.py",
+    "seo_title_extend.py",
+    "seo_rebuild_broken.py",
+    "server-opt/shrink_index.py",
+    "server-opt/purge_closed_pages.py",
+    "server-opt/rerender_hubs_home.py",
+    "server-opt/rerender_open_hubs.py",
+    "server-opt/inject_chat_widget.py",
+    "server-opt/swap_tailwind_cdn.py",
+    "server-opt/patch_landing_fixes.py",
+)
+
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
@@ -66,6 +79,16 @@ def check_generator(failures: list[str]) -> None:
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
 
 
+def check_write_safety(failures: list[str]) -> None:
+    for rel_path in WRITE_TO_PRODUCTION_SCRIPTS:
+        path = ROOT / rel_path
+        require(path.is_file(), f"maintenance script missing: {rel_path}", failures)
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        require("--apply" in text, f"{rel_path}: production writes are not gated by --apply", failures)
+
+
 def check_nginx(failures: list[str]) -> None:
     nginx_dir = ROOT / "server-opt/nginx"
     require(not (nginx_dir / "x-gu.ru.conf.current").exists(), "stale x-gu.ru.conf.current exists", failures)
@@ -85,12 +108,14 @@ def check_repository_shape(failures: list[str]) -> None:
     require((ROOT / ".env.example").is_file(), ".env.example missing", failures)
     require((ROOT / ".github/workflows/ci.yml").is_file(), "CI workflow missing", failures)
     require((ROOT / "requirements.txt").is_file(), "requirements.txt missing", failures)
+    require((ROOT / "server-opt/index_policy.example.json").is_file(), "index policy example missing", failures)
 
 
 def main() -> int:
     failures: list[str] = []
     check_templates(failures)
     check_generator(failures)
+    check_write_safety(failures)
     check_nginx(failures)
     check_repository_shape(failures)
 
@@ -103,6 +128,7 @@ def main() -> int:
     print("Repository healthcheck: OK")
     print("  templates synchronized")
     print("  generator fail-closed/sanitization guards present")
+    print("  production maintenance scripts require --apply")
     print("  canonical robots/template fixes present")
     print("  nginx canonicalization and hardening present")
     return 0
