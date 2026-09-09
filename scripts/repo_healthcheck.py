@@ -27,6 +27,7 @@ WRITE_TO_PRODUCTION_SCRIPTS = (
     "server-opt/inject_chat_widget.py",
     "server-opt/swap_tailwind_cdn.py",
     "server-opt/patch_landing_fixes.py",
+    "server-opt/sanitize_generated_proof.py",
 )
 
 
