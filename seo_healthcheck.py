@@ -8,7 +8,7 @@ from collections import Counter
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 
 def _as_int(name: str, default: int) -> int:
@@ -34,16 +34,15 @@ def _normalize_url(value: str) -> str:
     if not value:
         return value
     parsed = urlparse(value)
+    clean = parsed._replace(query="", fragment="").geturl()
+    parsed = urlparse(clean)
     if parsed.path.endswith("/") or "." in Path(parsed.path).name:
-        return value
-    return value + "/"
+        return clean
+    return clean + "/"
 
 
 class PageParser(HTMLParser):
-    """Small HTML parser for the fields the healthcheck needs.
-
-    This avoids fragile assumptions about attribute order in meta/link tags.
-    """
+    """Small tolerant HTML parser for the fields the healthcheck needs."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -52,6 +51,7 @@ class PageParser(HTMLParser):
         self.canonical = ""
         self.lang = ""
         self.h1s: list[str] = []
+        self.hrefs: list[str] = []
         self._h1_parts: list[str] | None = None
         self._in_title = False
         self._skip_depth = 0
@@ -95,6 +95,10 @@ class PageParser(HTMLParser):
             rel = {part.lower() for part in amap.get("rel", "").split()}
             if "canonical" in rel and not self.canonical:
                 self.canonical = amap.get("href", "").strip()
+        elif tag == "a":
+            href = amap.get("href", "").strip()
+            if href:
+                self.hrefs.append(href)
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
@@ -145,6 +149,43 @@ def _read_sitemap_urls(root: Path) -> set[str]:
         for value in loc_re.findall(text):
             urls.add(_normalize_url(unescape(value.strip())))
     return urls
+
+
+def _invalid_jsonld_blocks(html: str) -> int:
+    blocks = re.findall(
+        r'<script\b[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html,
+        flags=re.I | re.S,
+    )
+    invalid = 0
+    for block in blocks:
+        try:
+            json.loads(block.strip())
+        except (TypeError, ValueError, json.JSONDecodeError):
+            invalid += 1
+    return invalid
+
+
+def _internal_page_target(href: str, current_url: str, base_url: str) -> str | None:
+    href = href.strip()
+    lowered = href.lower()
+    if not href or lowered.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
+        return None
+
+    resolved = urljoin(current_url, href)
+    parsed = urlparse(resolved)
+    base = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or parsed.netloc != base.netloc:
+        return None
+
+    path = parsed.path or "/"
+    if path.startswith(("/api/", "/assets/", "/.well-known/", "/console")):
+        return None
+    if path.endswith("/index.html"):
+        path = path[: -len("index.html")]
+    if "." in Path(path).name:
+        return None
+    return _normalize_url(f"{base_url}{path}")
 
 
 def _load_index_policy(keep_config: Path, whitelist: Path, base_url: str) -> dict | None:
@@ -202,6 +243,7 @@ def run_audit(
     whitelist = whitelist or Path(os.getenv("SEOHC_WHITELIST", "/opt/p3-app/data/whitelist.txt"))
 
     files = list(root.rglob("index.html"))
+    page_urls = {_normalize_url(_page_url(root, html_file, base_url)) for html_file in files}
     sitemap_urls = _read_sitemap_urls(root)
     policy = _load_index_policy(keep_config, whitelist, base_url)
 
@@ -216,6 +258,8 @@ def run_audit(
         "missing_og_title": 0,
         "missing_og_description": 0,
         "missing_jsonld": 0,
+        "invalid_jsonld_pages": 0,
+        "invalid_jsonld_blocks": 0,
         "has_noindex": 0,
         "thin_content_lt_250_words": 0,
         "bad_title_len": 0,
@@ -226,10 +270,14 @@ def run_audit(
         "unexpected_index_closed": 0,
         "open_missing_sitemap": 0,
         "closed_in_sitemap": 0,
+        "broken_internal_links": 0,
+        "pages_with_broken_internal_links": 0,
         "policy_checked_pages": 0,
     }
     title_counter: Counter[str] = Counter()
     h1_counter: Counter[str] = Counter()
+    canonical_counter: Counter[str] = Counter()
+    page_links: list[tuple[str, list[str]]] = []
 
     for html_file in files:
         html = html_file.read_text(encoding="utf-8", errors="ignore")
@@ -237,7 +285,6 @@ def run_audit(
         try:
             parser.feed(html)
         except Exception:
-            # Continue with whatever the tolerant HTMLParser managed to collect.
             pass
 
         title = parser.title
@@ -248,6 +295,8 @@ def run_audit(
         normalized_page_url = _normalize_url(page_url)
         normalized_canon = _normalize_url(canon) if canon else ""
         expected_open = _expected_indexable(page_url, base_url, policy)
+        invalid_jsonld = _invalid_jsonld_blocks(html)
+        page_links.append((normalized_page_url, parser.hrefs))
 
         words = [w for w in re.split(r"[^\wа-яё-]+", parser.body_text.lower(), flags=re.I) if w]
 
@@ -255,6 +304,8 @@ def run_audit(
             title_counter[title] += 1
         if h1s:
             h1_counter[h1s[0]] += 1
+        if normalized_canon:
+            canonical_counter[normalized_canon] += 1
 
         if not title:
             stats["missing_title"] += 1
@@ -274,6 +325,9 @@ def run_audit(
             stats["missing_og_description"] += 1
         if not parser.has_jsonld:
             stats["missing_jsonld"] += 1
+        if invalid_jsonld:
+            stats["invalid_jsonld_pages"] += 1
+            stats["invalid_jsonld_blocks"] += invalid_jsonld
         if parser.has_noindex:
             stats["has_noindex"] += 1
         if len(words) < 250:
@@ -300,11 +354,23 @@ def run_audit(
                 if normalized_page_url in sitemap_urls:
                     stats["closed_in_sitemap"] += 1
 
+    for current_url, hrefs in page_links:
+        broken_targets: set[str] = set()
+        for href in hrefs:
+            target = _internal_page_target(href, current_url, base_url)
+            if target is not None and target not in page_urls:
+                broken_targets.add(target)
+        if broken_targets:
+            stats["pages_with_broken_internal_links"] += 1
+            stats["broken_internal_links"] += len(broken_targets)
+
     duplicates = {
         "title_duplicate_pages": sum(v for v in title_counter.values() if v > 1),
         "title_duplicate_groups": sum(1 for v in title_counter.values() if v > 1),
         "h1_duplicate_pages": sum(v for v in h1_counter.values() if v > 1),
         "h1_duplicate_groups": sum(1 for v in h1_counter.values() if v > 1),
+        "canonical_duplicate_pages": sum(v for v in canonical_counter.values() if v > 1),
+        "canonical_duplicate_groups": sum(1 for v in canonical_counter.values() if v > 1),
     }
     return {
         "stats": stats,
@@ -326,6 +392,7 @@ def evaluate(audit: dict) -> tuple[bool, list[str]]:
         "missing_og_title": _as_int("SEOHC_MAX_MISSING_OG_TITLE", 0),
         "missing_og_description": _as_int("SEOHC_MAX_MISSING_OG_DESCRIPTION", 0),
         "missing_jsonld": _as_int("SEOHC_MAX_MISSING_JSONLD", 0),
+        "invalid_jsonld_pages": _as_int("SEOHC_MAX_INVALID_JSONLD_PAGES", 0),
         "bad_title_len": _as_int("SEOHC_MAX_BAD_TITLE_LEN", 0),
         "bad_description_len": _as_int("SEOHC_MAX_BAD_DESC_LEN", 0),
         "bad_canonical_domain": _as_int("SEOHC_MAX_BAD_CANONICAL_DOMAIN", 0),
@@ -334,8 +401,10 @@ def evaluate(audit: dict) -> tuple[bool, list[str]]:
         "unexpected_index_closed": _as_int("SEOHC_MAX_UNEXPECTED_INDEX_CLOSED", 0),
         "open_missing_sitemap": _as_int("SEOHC_MAX_OPEN_MISSING_SITEMAP", 0),
         "closed_in_sitemap": _as_int("SEOHC_MAX_CLOSED_IN_SITEMAP", 0),
+        "broken_internal_links": _as_int("SEOHC_MAX_BROKEN_INTERNAL_LINKS", 0),
         "title_duplicate_pages": _as_int("SEOHC_MAX_TITLE_DUP_PAGES", 0),
         "h1_duplicate_pages": _as_int("SEOHC_MAX_H1_DUP_PAGES", 0),
+        "canonical_duplicate_pages": _as_int("SEOHC_MAX_CANONICAL_DUP_PAGES", 0),
     }
 
     breaches: list[str] = []
@@ -347,6 +416,7 @@ def evaluate(audit: dict) -> tuple[bool, list[str]]:
         "missing_og_title",
         "missing_og_description",
         "missing_jsonld",
+        "invalid_jsonld_pages",
         "bad_title_len",
         "bad_description_len",
         "bad_canonical_domain",
@@ -355,16 +425,14 @@ def evaluate(audit: dict) -> tuple[bool, list[str]]:
         "unexpected_index_closed",
         "open_missing_sitemap",
         "closed_in_sitemap",
+        "broken_internal_links",
     ):
         if s[key] > limits[key]:
             breaches.append(f"{key}={s[key]} > {limits[key]}")
 
-    if d["title_duplicate_pages"] > limits["title_duplicate_pages"]:
-        breaches.append(
-            f"title_duplicate_pages={d['title_duplicate_pages']} > {limits['title_duplicate_pages']}"
-        )
-    if d["h1_duplicate_pages"] > limits["h1_duplicate_pages"]:
-        breaches.append(f"h1_duplicate_pages={d['h1_duplicate_pages']} > {limits['h1_duplicate_pages']}")
+    for key in ("title_duplicate_pages", "h1_duplicate_pages", "canonical_duplicate_pages"):
+        if d[key] > limits[key]:
+            breaches.append(f"{key}={d[key]} > {limits[key]}")
     return len(breaches) == 0, breaches
 
 
@@ -397,14 +465,16 @@ def main() -> int:
         f"missing_title={s['missing_title']}, missing_description={s['missing_description']}, "
         f"missing_canonical={s['missing_canonical']}, missing_h1={s['missing_h1']}\n"
         f"bad_title_len={s['bad_title_len']}, bad_description_len={s['bad_description_len']}, "
-        f"canonical_mismatch={s['canonical_url_mismatch']}\n"
+        f"canonical_mismatch={s['canonical_url_mismatch']}, canonical_dup_pages={d['canonical_duplicate_pages']}\n"
+        f"jsonld_missing={s['missing_jsonld']}, jsonld_invalid_pages={s['invalid_jsonld_pages']}\n"
         f"noindex_total={s['has_noindex']}, unexpected_noindex_open={s['unexpected_noindex_open']}, "
         f"unexpected_index_closed={s['unexpected_index_closed']}\n"
-        f"open_missing_sitemap={s['open_missing_sitemap']}, closed_in_sitemap={s['closed_in_sitemap']}\n"
+        f"open_missing_sitemap={s['open_missing_sitemap']}, closed_in_sitemap={s['closed_in_sitemap']}, "
+        f"broken_internal_links={s['broken_internal_links']}\n"
         f"title_dup_pages={d['title_duplicate_pages']}, h1_dup_pages={d['h1_duplicate_pages']}"
     )
     if breaches:
-        text += "\nBreaches: " + "; ".join(breaches[:12])
+        text += "\nBreaches: " + "; ".join(breaches[:16])
 
     print(text)
     notify_enabled = _as_bool("SEOHC_NOTIFY_ENABLED", False)
