@@ -65,8 +65,10 @@ def check_templates(failures: list[str]) -> None:
 def check_generator(failures: list[str]) -> None:
     facade_path = ROOT / "content_generator.py"
     legacy_path = ROOT / "_content_generator_legacy.py"
+    morphology_path = ROOT / "city_morphology.py"
     require(facade_path.is_file(), "content generator facade missing", failures)
     require(legacy_path.is_file(), "preserved legacy generator missing", failures)
+    require(morphology_path.is_file(), "shared city morphology module missing", failures)
     if not facade_path.is_file():
         return
 
@@ -78,6 +80,16 @@ def check_generator(failures: list[str]) -> None:
     require('payload.get("@type") == "LocalBusiness"' in facade, "generated LocalBusiness sanitizer missing", failures)
     require("рост органики" in facade, "synthetic city KPI sanitizer missing", failures)
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
+    require(
+        "from city_morphology import city_prepositional" in facade,
+        "generator does not import shared city morphology",
+        failures,
+    )
+    require(
+        "_legacy._city_prepositional = city_prepositional" in facade,
+        "legacy render path is not patched to shared city morphology",
+        failures,
+    )
 
     canonical_pos = facade.find('here.parent / "server-opt" / "templates"')
     fallback_pos = facade.find('candidates.append(Path("app/templates"))')
@@ -90,6 +102,39 @@ def check_generator(failures: list[str]) -> None:
     )
 
 
+def check_seo_tooling(failures: list[str]) -> None:
+    repair_path = ROOT / "seo_inplace_fix.py"
+    health_path = ROOT / "seo_healthcheck.py"
+    require(repair_path.is_file(), "seo_inplace_fix.py missing", failures)
+    require(health_path.is_file(), "seo_healthcheck.py missing", failures)
+
+    if repair_path.is_file():
+        repair = repair_path.read_text(encoding="utf-8")
+        require(
+            "from city_morphology import city_prepositional" in repair,
+            "SEO repair duplicates city morphology instead of using shared module",
+            failures,
+        )
+
+    if health_path.is_file():
+        health = health_path.read_text(encoding="utf-8")
+        for token, message in (
+            ("SEOHC_BASE_URL", "SEO healthcheck base URL is still hard-coded"),
+            ("SEOHC_KEEP_CONFIG", "SEO healthcheck does not load index keep-config"),
+            ("unexpected_noindex_open", "SEO healthcheck cannot detect open pages accidentally noindexed"),
+            ("unexpected_index_closed", "SEO healthcheck cannot detect closed pages accidentally indexed"),
+            ("open_missing_sitemap", "SEO healthcheck cannot detect open pages missing from sitemap"),
+            ("closed_in_sitemap", "SEO healthcheck cannot detect closed pages leaking into sitemap"),
+            ("canonical_url_mismatch", "SEO healthcheck does not validate canonical URL against page URL"),
+        ):
+            require(token in health, message, failures)
+        require(
+            "from app.services.notify_service import send_telegram" not in health.splitlines()[:20],
+            "SEO healthcheck has a mandatory private-backend import at module load",
+            failures,
+        )
+
+
 def check_write_safety(failures: list[str]) -> None:
     for rel_path in WRITE_TO_PRODUCTION_SCRIPTS:
         path = ROOT / rel_path
@@ -98,6 +143,22 @@ def check_write_safety(failures: list[str]) -> None:
             continue
         text = path.read_text(encoding="utf-8")
         require("--apply" in text, f"{rel_path}: production writes are not gated by --apply", failures)
+
+
+def check_ci_and_tests(failures: list[str]) -> None:
+    ci_path = ROOT / ".github/workflows/ci.yml"
+    require(ci_path.is_file(), "CI workflow missing", failures)
+    require((ROOT / "tests/test_city_morphology.py").is_file(), "city morphology tests missing", failures)
+    require((ROOT / "tests/test_seo_healthcheck.py").is_file(), "SEO healthcheck tests missing", failures)
+    if ci_path.is_file():
+        ci = ci_path.read_text(encoding="utf-8")
+        require(
+            "python -m unittest discover -s tests -v" in ci,
+            "CI no longer runs standalone unit tests",
+            failures,
+        )
+        require("python -m compileall -q ." in ci, "CI syntax compilation check missing", failures)
+        require("python scripts/repo_healthcheck.py" in ci, "CI repository invariant check missing", failures)
 
 
 def check_nginx(failures: list[str]) -> None:
@@ -117,7 +178,6 @@ def check_nginx(failures: list[str]) -> None:
 def check_repository_shape(failures: list[str]) -> None:
     require((ROOT / "README.md").is_file(), "README.md missing", failures)
     require((ROOT / ".env.example").is_file(), ".env.example missing", failures)
-    require((ROOT / ".github/workflows/ci.yml").is_file(), "CI workflow missing", failures)
     require((ROOT / "requirements.txt").is_file(), "requirements.txt missing", failures)
     require((ROOT / "server-opt/index_policy.example.json").is_file(), "index policy example missing", failures)
 
@@ -126,7 +186,9 @@ def main() -> int:
     failures: list[str] = []
     check_templates(failures)
     check_generator(failures)
+    check_seo_tooling(failures)
     check_write_safety(failures)
+    check_ci_and_tests(failures)
     check_nginx(failures)
     check_repository_shape(failures)
 
@@ -139,6 +201,9 @@ def main() -> int:
     print("Repository healthcheck: OK")
     print("  templates synchronized")
     print("  generator fail-closed/sanitization guards present")
+    print("  generator and repair tools share city morphology")
+    print("  SEO healthcheck is index-policy/sitemap/canonical aware")
+    print("  standalone unit tests are wired into CI")
     print("  canonical repository templates take priority")
     print("  production maintenance scripts require --apply")
     print("  canonical robots/template fixes present")
