@@ -21,7 +21,7 @@ APP_ROOT = Path("/opt/p3-app")
 sys.path.insert(0, str(APP_ROOT))
 os.chdir(APP_ROOT)
 
-from content_generator import _render_city_hub_html, _render_html_landing  # noqa: E402
+from app.services.content_generator import _render_city_hub_html, _render_html_landing  # noqa: E402
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
