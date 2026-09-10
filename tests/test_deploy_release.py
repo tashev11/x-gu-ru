@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from release_integrity import build_release_metadata, write_release_metadata
+
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "server-opt" / "deploy_release.py"
 SPEC = importlib.util.spec_from_file_location("xgu_deploy_release", MODULE_PATH)
@@ -15,8 +17,18 @@ if SPEC is None or SPEC.loader is None:
 deploy_release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(deploy_release)
 
+REVISION = "a" * 40
+
 
 class DeployReleaseTests(unittest.TestCase):
+    def _finalize(self, release: Path) -> None:
+        payload = build_release_metadata(
+            release,
+            tooling_revision=REVISION,
+            finalized_at="2026-09-10T18:00:00+00:00",
+        )
+        write_release_metadata(release, payload)
+
     def _release(self, root: Path, name: str) -> Path:
         release = root / name
         release.mkdir()
@@ -31,44 +43,41 @@ class DeployReleaseTests(unittest.TestCase):
         whitelist.write_text(whitelist_text, encoding="utf-8")
         whitelist_digest = hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest()
         (release / deploy_release.KEEP_FILENAME).write_text(
-            json.dumps(
-                {
-                    "open_cities": ["moskva"],
-                    "open_services": ["seo-audit-saita"],
-                    "policy_source": "/reviewed/index_policy.json",
-                    "policy_sha256": "a" * 64,
-                    "whitelist_source": "/reviewed/whitelist.txt",
-                    "whitelist_sha256": whitelist_digest,
-                }
-            ),
+            json.dumps({
+                "open_cities": ["moskva"],
+                "open_services": ["seo-audit-saita"],
+                "policy_source": "/reviewed/index_policy.json",
+                "policy_sha256": "a" * 64,
+                "whitelist_source": "/reviewed/whitelist.txt",
+                "whitelist_sha256": whitelist_digest,
+            }),
             encoding="utf-8",
         )
+        self._finalize(release)
         return release
 
-    def test_validate_release_requires_core_files(self) -> None:
+    def test_validate_release_requires_finalized_core_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             release = Path(temp) / "broken"
             release.mkdir()
             errors = deploy_release.validate_release(release)
-            self.assertGreaterEqual(len(errors), 5)
+            self.assertGreaterEqual(len(errors), 6)
             self.assertTrue(any(deploy_release.KEEP_FILENAME in error for error in errors))
             self.assertTrue(any(deploy_release.WHITELIST_FILENAME in error for error in errors))
+            self.assertTrue(any(deploy_release.RELEASE_METADATA_FILENAME in error for error in errors))
 
     def test_invalid_keep_manifest_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            release = self._release(root, "candidate")
+            release = self._release(Path(temp), "candidate")
             (release / deploy_release.KEEP_FILENAME).write_text(
-                json.dumps(
-                    {
-                        "open_cities": ["moskva"],
-                        "open_services": ["seo-audit-saita"],
-                        "policy_source": "reviewed",
-                        "policy_sha256": "bad",
-                        "whitelist_source": "reviewed",
-                        "whitelist_sha256": "bad",
-                    }
-                ),
+                json.dumps({
+                    "open_cities": ["moskva"],
+                    "open_services": ["seo-audit-saita"],
+                    "policy_source": "reviewed",
+                    "policy_sha256": "bad",
+                    "whitelist_source": "reviewed",
+                    "whitelist_sha256": "bad",
+                }),
                 encoding="utf-8",
             )
             errors = deploy_release.validate_release(release)
@@ -84,17 +93,14 @@ class DeployReleaseTests(unittest.TestCase):
             new = self._release(releases, "new")
             current = root / "current"
             current.symlink_to(old)
-
             previous = deploy_release.switch_release(current, new, releases_root=releases)
-
             self.assertEqual(previous, old.resolve())
             self.assertTrue(current.is_symlink())
             self.assertEqual(current.resolve(), new.resolve())
 
     def test_refuses_real_current_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            current = root / "current"
+            current = Path(temp) / "current"
             current.mkdir()
             with self.assertRaises(RuntimeError):
                 deploy_release._current_target(current)
@@ -105,9 +111,7 @@ class DeployReleaseTests(unittest.TestCase):
             releases = root / "releases"
             releases.mkdir()
             outside = self._release(root, "outside")
-
             errors = deploy_release.validate_release(outside, releases_root=releases)
-
             self.assertTrue(any("direct child" in error for error in errors))
             with self.assertRaises(RuntimeError):
                 deploy_release.switch_release(root / "current", outside, releases_root=releases)
@@ -125,7 +129,6 @@ class DeployReleaseTests(unittest.TestCase):
 </sitemapindex>""",
                 encoding="utf-8",
             )
-
             errors = deploy_release.validate_release(release, releases_root=releases)
             self.assertTrue(any("referenced sitemap shard missing" in error for error in errors))
 
@@ -151,9 +154,8 @@ class DeployReleaseTests(unittest.TestCase):
 </sitemapindex>""",
                 encoding="utf-8",
             )
-
             errors = deploy_release.validate_release(release, releases_root=releases)
-            self.assertTrue(any("non-canonical host" in error for error in errors))
+            self.assertTrue(any("not canonical HTTPS" in error for error in errors))
 
 
 if __name__ == "__main__":
