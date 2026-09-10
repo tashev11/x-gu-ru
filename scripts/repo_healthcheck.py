@@ -451,6 +451,7 @@ def check_repository_shape(failures: list[str]) -> None:
         ".github/workflows/ci.yml",
         "release_safety.py",
         "server-opt/predeploy_check.py",
+        "server-opt/PRODUCTION_DEPLOY_RUNBOOK.md",
     ):
         read_text(rel_path, failures)
 
@@ -458,6 +459,11 @@ def check_repository_shape(failures: list[str]) -> None:
     require("XGU_ALLOW_LEGACY_WHITELIST" in env_example, ".env.example omits legacy whitelist migration gate", failures)
     require("SEOHC_ALLOW_LEGACY_WHITELIST" in env_example, ".env.example omits SEO legacy whitelist migration gate", failures)
     require("SEOHC_REQUIRE_POLICY=true" in env_example, ".env.example does not document fail-closed SEO policy", failures)
+
+    runbook = read_text("server-opt/PRODUCTION_DEPLOY_RUNBOOK.md", failures)
+    require("STOP: current is not a symlink" in runbook, "production runbook does not stop on legacy current directory", failures)
+    require("python scripts/validate_repo.py" in runbook, "production runbook skips repository validation", failures)
+    require("deploy_release.py \"$RELEASE\" --apply" in runbook, "production runbook has no atomic release switch", failures)
 
 
 def main() -> int:
@@ -491,6 +497,7 @@ def main() -> int:
     print("  homepage/open-hub rerenders are candidate-policy constrained")
     print("  purge requires index.html + noindex and re-checks active release")
     print("  deploy validates self-contained release before atomic switch")
+    print("  production runbook requires read-only discovery before rollout")
     print("  release pruning re-checks current immediately before deletion")
     print("  generator install is syntax-checked, staged and rollback-safe")
     print("  GitHub CI and local checks share one validation entrypoint")
