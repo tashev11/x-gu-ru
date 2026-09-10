@@ -7,6 +7,7 @@ without a risky full rewrite of the legacy renderer.
 Key protections:
 - canonical template resolution and HTML auto-escaping;
 - index policy and whitelist follow the active release through ``current``;
+- policy v1 matrix and policy v2 exact city/service pairs are supported;
 - missing/mismatched policy or whitelist fail closed;
 - synthetic testimonial data is disabled before rendering;
 - synthetic review/rating/proof markup is stripped from generated HTML;
@@ -26,8 +27,10 @@ from jinja2 import Environment, FileSystemLoader
 
 try:  # Private-backend package install: app.services.content_generator.
     from .city_morphology import city_prepositional  # type: ignore
+    from .index_policy import normalize_policy_payload, page_is_open as policy_page_is_open  # type: ignore
 except ImportError:  # Public-repository/root execution.
     from city_morphology import city_prepositional
+    from index_policy import normalize_policy_payload, page_is_open as policy_page_is_open
 
 try:  # Private-backend package install.
     from . import _content_generator_legacy as _legacy  # type: ignore
@@ -151,10 +154,7 @@ def _release_whitelist_path(keep_path: Path | None = None) -> Path:
         return path
 
     if keep_path is not None and keep_path.name == _RELEASE_KEEP_FILENAME:
-        sibling = keep_path.parent / _RELEASE_WHITELIST_FILENAME
-        if sibling.is_file():
-            return sibling
-        return sibling
+        return keep_path.parent / _RELEASE_WHITELIST_FILENAME
 
     release_whitelist = _current_root() / _RELEASE_WHITELIST_FILENAME
     if release_whitelist.is_file():
@@ -211,10 +211,10 @@ def _load_keep_config() -> dict | None:
     if not isinstance(payload, dict):
         raise RuntimeError(f"Index keep-config root must be an object: {path}")
 
-    open_cities = set(payload.get("open_cities") or [])
-    open_services = set(payload.get("open_services") or [])
-    if not open_cities or not open_services:
-        raise RuntimeError(f"Index keep-config has empty open_cities/open_services: {path}")
+    try:
+        policy = normalize_policy_payload(payload)
+    except ValueError as exc:
+        raise RuntimeError(f"Index keep-config policy is invalid: {path}: {exc}") from exc
 
     legacy_keep = path.name == "index_keep_config.json" and _env_true("XGU_ALLOW_LEGACY_KEEP_CONFIG")
     whitelist = _release_whitelist_path(path)
@@ -246,8 +246,10 @@ def _load_keep_config() -> dict | None:
             )
 
     return {
-        "open_cities": open_cities,
-        "open_services": open_services,
+        **policy,
+        "open_cities": set(policy["open_cities"]),
+        "open_services": set(policy["open_services"]),
+        "open_pairs": set(policy["open_pairs"]),
         "whitelist_paths": _whitelist_paths(whitelist),
         "policy_source": payload.get("policy_source"),
         "policy_sha256": payload.get("policy_sha256"),
@@ -264,9 +266,7 @@ def _page_is_open(city_slug: str, service_slug: str | None = None) -> bool:
         return True
     if (city_slug, service_slug) in keep["whitelist_paths"]:
         return True
-    if city_slug not in keep["open_cities"]:
-        return False
-    return service_slug is None or service_slug in keep["open_services"]
+    return policy_page_is_open(keep, city_slug, service_slug)
 
 
 def _safe_landing_variants(*args, **kwargs) -> dict:
