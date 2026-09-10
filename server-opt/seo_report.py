@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 """Consolidated x-gu.ru SEO report for a programmatic page inventory.
 
-Read-only report combining:
-- current release policy/inventory;
-- full-corpus quality signals;
-- Yandex Webmaster in-search URLs and query data;
-- Google Search Console page/query performance.
-
-Unlike the historical report, policy membership is checked for the exact URL
-(city + service), not merely for the city slug.
+Read-only report combining current release policy/inventory, full-corpus quality,
+Yandex Webmaster and Google Search Console. Policy membership is evaluated for
+the exact URL, including policy v2 city/service pairs.
 """
 from __future__ import annotations
 
@@ -108,6 +103,12 @@ def _release_policy(root: Path, base_url: str) -> dict:
     return policy
 
 
+def _policy_pair_count(policy: dict) -> int:
+    if int(policy.get("policy_version") or 1) == 2:
+        return len(policy.get("open_pairs") or [])
+    return len(policy.get("open_cities") or []) * len(policy.get("open_services") or [])
+
+
 def _current_page_urls(root: Path, base_url: str, policy: dict) -> tuple[set[str], set[str]]:
     open_urls: set[str] = set()
     closed_urls: set[str] = set()
@@ -118,9 +119,12 @@ def _current_page_urls(root: Path, base_url: str, policy: dict) -> tuple[set[str
     return open_urls, closed_urls
 
 
-def _print_programmatic_inventory(root: Path, base_url: str) -> None:
+def _print_programmatic_inventory(root: Path, base_url: str, policy: dict) -> None:
     audit = run_programmatic_audit(root, base_url=base_url)
     print("\n[Release] Programmatic SEO inventory:")
+    print(f"  policy:                  v{policy.get('policy_version')} {policy.get('policy_mode')}")
+    print(f"  policy open city hubs:   {len(policy.get('open_cities') or [])}")
+    print(f"  policy service pairs:    {_policy_pair_count(policy)}")
     print(f"  physical pages:          {audit['physical_pages']}")
     print(f"  expected indexable:      {audit['indexable_pages']}")
     print(f"  policy-closed:           {audit['closed_pages']}")
@@ -263,7 +267,7 @@ def main() -> int:
     try:
         policy = _release_policy(root, base_url)
         open_urls, closed_urls = _current_page_urls(root, base_url, policy)
-        _print_programmatic_inventory(root, base_url)
+        _print_programmatic_inventory(root, base_url, policy)
         print(f"  exact policy open URLs on disk:   {len(open_urls)}")
         print(f"  exact policy closed URLs on disk: {len(closed_urls)}")
 
