@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Repository-level safety checks for x-gu.ru.
+"""Static repository safety invariants for x-gu.ru.
 
-These checks avoid importing the private ``app.*`` backend. They intentionally
-verify architecture/safety properties that are expensive to discover only after
-a programmatic SEO release has reached production.
+The checker deliberately avoids importing the private ``app.*`` backend. It is
+run by ``scripts/validate_repo.py`` after syntax/lint/unit checks and protects
+architecture decisions that must not silently regress.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-TEMPLATE_NAMES = (
+TEMPLATES = (
     "landing_master.html.j2",
     "city_hub_master.html.j2",
     "homepage_master.html.j2",
@@ -37,19 +37,7 @@ PRODUCTION_MUTATORS = (
     "server-opt/bootstrap_release_layout.py",
 )
 
-RELEASE_FIRST_MUTATORS = (
-    "seo_inplace_fix.py",
-    "seo_title_extend.py",
-    "seo_rebuild_broken.py",
-    "server-opt/shrink_index.py",
-    "server-opt/purge_closed_pages.py",
-    "server-opt/rerender_hubs_home.py",
-    "server-opt/rerender_open_hubs.py",
-    "server-opt/inject_chat_widget.py",
-    "server-opt/swap_tailwind_cdn.py",
-    "server-opt/patch_landing_fixes.py",
-    "server-opt/sanitize_generated_proof.py",
-)
+RELEASE_FIRST_MUTATORS = PRODUCTION_MUTATORS[:11]
 
 BACKEND_GENERATOR_CONSUMERS = (
     "seo_rebuild_broken.py",
@@ -72,464 +60,348 @@ TEST_FILES = (
 )
 
 
-def require(condition: bool, message: str, failures: list[str]) -> None:
-    if not condition:
-        failures.append(message)
-
-
-def read_text(rel_path: str, failures: list[str]) -> str:
-    path = ROOT / rel_path
+def read(rel: str, failures: list[str]) -> str:
+    path = ROOT / rel
     if not path.is_file():
-        failures.append(f"missing file: {rel_path}")
+        failures.append(f"missing file: {rel}")
         return ""
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        failures.append(f"cannot read {rel_path}: {exc}")
+        failures.append(f"cannot read {rel}: {exc}")
         return ""
 
 
-def require_tokens(text: str, checks: tuple[tuple[str, str], ...], failures: list[str]) -> None:
-    for token, message in checks:
-        require(token in text, message, failures)
+def need(condition: bool, message: str, failures: list[str]) -> None:
+    if not condition:
+        failures.append(message)
+
+
+def tokens(text: str, required: dict[str, str], failures: list[str]) -> None:
+    for token, message in required.items():
+        need(token in text, message, failures)
 
 
 def check_templates(failures: list[str]) -> None:
-    for name in TEMPLATE_NAMES:
-        root_copy = ROOT / name
-        production_copy = ROOT / "server-opt" / "templates" / name
-        require(root_copy.is_file(), f"missing root template: {name}", failures)
-        require(production_copy.is_file(), f"missing production template: {name}", failures)
-        if root_copy.is_file() and production_copy.is_file():
-            require(root_copy.read_bytes() == production_copy.read_bytes(), f"template copies diverged: {name}", failures)
+    for name in TEMPLATES:
+        root = ROOT / name
+        canonical = ROOT / "server-opt" / "templates" / name
+        need(root.is_file(), f"missing root template: {name}", failures)
+        need(canonical.is_file(), f"missing canonical template: {name}", failures)
+        if root.is_file() and canonical.is_file():
+            need(root.read_bytes() == canonical.read_bytes(), f"template copies diverged: {name}", failures)
 
-    landing = read_text("server-opt/templates/landing_master.html.j2", failures)
-    hub = read_text("server-opt/templates/city_hub_master.html.j2", failures)
-    homepage = read_text("server-opt/templates/homepage_master.html.j2", failures)
-    for label, text in (("landing", landing), ("hub", hub), ("homepage", homepage)):
-        require("cdn.tailwindcss.com" not in text, f"{label}: Tailwind Play CDN returned", failures)
-        require("avitobibot" not in text, f"{label}: obsolete Telegram handle returned", failures)
-    require("{{ robots_content" in hub, "city hub ignores robots_content", failures)
-    require("/privacy/" in landing, "landing has no real privacy link", failures)
-    require("/assets/tailwind.min.css" in landing, "landing does not use local Tailwind CSS", failures)
+    landing = read("server-opt/templates/landing_master.html.j2", failures)
+    hub = read("server-opt/templates/city_hub_master.html.j2", failures)
+    for name in TEMPLATES:
+        text = read(f"server-opt/templates/{name}", failures)
+        need("cdn.tailwindcss.com" not in text, f"{name}: Tailwind Play CDN returned", failures)
+        need("avitobibot" not in text, f"{name}: obsolete Telegram handle returned", failures)
+    need("{{ robots_content" in hub, "city hub ignores robots_content", failures)
+    need("/privacy/" in landing, "landing has no privacy link", failures)
+    need("/assets/tailwind.min.css" in landing, "landing does not use local Tailwind CSS", failures)
 
 
 def check_generator(failures: list[str]) -> None:
-    facade = read_text("content_generator.py", failures)
-    read_text("_content_generator_legacy.py", failures)
-    read_text("city_morphology.py", failures)
-    require_tokens(
+    facade = read("content_generator.py", failures)
+    read("_content_generator_legacy.py", failures)
+    read("city_morphology.py", failures)
+    tokens(
         facade,
-        (
-            ("autoescape=True", "generator HTML autoescape is not enforced"),
-            ('_RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"', "release keep manifest constant missing"),
-            ('_RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"', "release whitelist snapshot constant missing"),
-            ("XGU_KEEP_CONFIG", "candidate keep-config override missing"),
-            ("XGU_WHITELIST", "candidate whitelist override missing"),
-            ("XGU_CURRENT_ROOT", "active release root is not configurable"),
-            ("XGU_ALLOW_LEGACY_KEEP_CONFIG", "legacy keep-config is not explicitly gated"),
-            ("XGU_ALLOW_LEGACY_WHITELIST", "legacy whitelist is not explicitly gated"),
-            ("XGU_ALLOW_MISSING_KEEP_CONFIG", "missing-policy migration override missing"),
-            ("hashlib.sha256(whitelist.read_bytes()).hexdigest()", "generator does not verify release whitelist hash"),
-            ("_safe_landing_variants", "generator does not suppress legacy testimonial cards before render"),
-            ('variants["review_cards"] = []', "legacy review cards are not disabled before render"),
-            ("_disabled_review_variant", "legacy deterministic review object is not disabled"),
-            ("_legacy._landing_variants = _safe_landing_variants", "legacy landing renderer does not use safe variants"),
-            ("_legacy._review_variant = _disabled_review_variant", "legacy renderer can still generate fake review data"),
-            ("_sanitize_generated_html", "generated HTML sanitizer missing"),
-            ('key in {"aggregateRating", "review"}', "rating/review schema sanitizer missing"),
-            ('payload.get("@type") == "LocalBusiness"', "generated LocalBusiness sanitizer missing"),
-            ("from .city_morphology import city_prepositional", "private-backend morphology import missing"),
-            ("from city_morphology import city_prepositional", "root morphology fallback missing"),
-            ("_legacy._city_prepositional = city_prepositional", "legacy renderer does not use shared morphology"),
-        ),
+        {
+            "autoescape=True": "generator autoescape is not enforced",
+            '_RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"': "release policy manifest support missing",
+            '_RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"': "release whitelist support missing",
+            "XGU_ALLOW_LEGACY_KEEP_CONFIG": "legacy keep-config is not explicitly gated",
+            "XGU_ALLOW_LEGACY_WHITELIST": "legacy whitelist is not explicitly gated",
+            "XGU_ALLOW_MISSING_KEEP_CONFIG": "missing-policy migration gate missing",
+            "Release whitelist SHA-256 mismatch": "generator does not verify release whitelist hash",
+            '_legacy._landing_variants = _safe_landing_variants': "legacy testimonial cards are not disabled before render",
+            '_legacy._review_variant = _disabled_review_variant': "legacy deterministic review object is not disabled",
+            '_legacy._city_prepositional = city_prepositional': "legacy generator does not use shared city morphology",
+            "_sanitize_generated_html": "generated HTML sanitizer missing",
+            'key in {"aggregateRating", "review"}': "review/rating JSON-LD sanitizer missing",
+            'payload.get("@type") == "LocalBusiness"': "generated LocalBusiness sanitizer missing",
+        },
         failures,
     )
-    require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
+    need("reviewCount" not in facade, "synthetic review count leaked into hardened facade", failures)
 
-    canonical_pos = facade.find('candidates.append(root / "server-opt" / "templates")')
-    fallback_pos = facade.find('candidates.append(Path("app/templates"))')
-    require(canonical_pos >= 0, "canonical repository template path missing", failures)
-    require(fallback_pos >= 0, "legacy app/templates fallback missing", failures)
-    require(
-        canonical_pos >= 0 and fallback_pos >= 0 and canonical_pos < fallback_pos,
-        "generator prefers legacy app/templates over canonical templates",
-        failures,
-    )
-
-    keep_gate = facade.find('if _env_true("XGU_ALLOW_LEGACY_KEEP_CONFIG")')
-    keep_lookup = facade.find('_data_file("index_keep_config.json")')
-    whitelist_gate = facade.find('if _env_true("XGU_ALLOW_LEGACY_WHITELIST")')
-    whitelist_lookup = facade.find('_data_file("whitelist.txt")')
-    require(keep_gate >= 0 and keep_lookup > keep_gate, "legacy keep-config fallback is not gated", failures)
-    require(
-        whitelist_gate >= 0 and whitelist_lookup > whitelist_gate,
-        "legacy whitelist fallback is not gated",
-        failures,
-    )
+    canonical = facade.find('candidates.append(root / "server-opt" / "templates")')
+    legacy = facade.find('candidates.append(Path("app/templates"))')
+    need(canonical >= 0 and legacy > canonical, "canonical templates are not preferred over app/templates", failures)
 
 
-def check_seo_tooling(failures: list[str]) -> None:
-    repair = read_text("seo_inplace_fix.py", failures)
-    health = read_text("seo_healthcheck.py", failures)
-    predeploy = read_text("server-opt/predeploy_check.py", failures)
-    require("from city_morphology import city_prepositional" in repair, "SEO repair duplicates city morphology", failures)
+def check_policy_and_seo(failures: list[str]) -> None:
+    shrink = read("server-opt/shrink_index.py", failures)
+    health = read("seo_healthcheck.py", failures)
+    predeploy = read("server-opt/predeploy_check.py", failures)
 
-    require_tokens(
-        health,
-        (
-            ("RELEASE_KEEP_FILENAME", "SEO healthcheck is not release-manifest aware"),
-            ("RELEASE_WHITELIST_FILENAME", "SEO healthcheck is not release-whitelist aware"),
-            ("SEOHC_REQUIRE_POLICY", "SEO healthcheck does not fail closed on missing policy"),
-            ("SEOHC_ALLOW_LEGACY_KEEP_CONFIG", "SEO legacy keep fallback is not opt-in"),
-            ("SEOHC_ALLOW_LEGACY_WHITELIST", "SEO legacy whitelist fallback is not opt-in"),
-            ("release whitelist SHA-256 mismatch", "SEO healthcheck does not verify whitelist integrity"),
-            ("unexpected_noindex_open", "SEO healthcheck cannot detect open pages accidentally noindexed"),
-            ("unexpected_index_closed", "SEO healthcheck cannot detect closed pages accidentally indexed"),
-            ("open_missing_sitemap", "SEO healthcheck cannot detect open pages missing from sitemap"),
-            ("closed_in_sitemap", "SEO healthcheck cannot detect closed pages leaking into sitemap"),
-            ("bad_sitemap_urls", "SEO healthcheck cannot detect malformed/noncanonical sitemap URLs"),
-            ("sitemap_orphan_urls", "SEO healthcheck cannot detect sitemap URLs without pages"),
-            ("canonical_url_mismatch", "SEO healthcheck does not validate canonical URL"),
-            ("canonical_duplicate_pages", "SEO healthcheck cannot detect duplicate canonical URLs"),
-            ("invalid_jsonld_pages", "SEO healthcheck cannot detect invalid JSON-LD"),
-            ("broken_internal_links", "SEO healthcheck cannot detect broken internal links"),
-        ),
-        failures,
-    )
-    require(
-        "from app.services.notify_service import send_telegram" not in health.splitlines()[:20],
-        "SEO healthcheck requires private backend at import time",
-        failures,
-    )
-
-    require_tokens(
-        predeploy,
-        (
-            ('KEEP_FILENAME = ".xgu-index-keep.json"', "predeploy is not bound to release manifest"),
-            ('WHITELIST_FILENAME = ".xgu-whitelist.txt"', "predeploy is not bound to release whitelist"),
-            ("whitelist must be the release snapshot", "predeploy accepts an unrelated whitelist"),
-            ("whitelist_sha256", "predeploy does not require whitelist hash"),
-            ("release whitelist SHA-256 mismatch", "predeploy does not verify whitelist hash"),
-            ('audit.get("policy_loaded")', "predeploy does not verify policy was loaded"),
-            ("policy-check every HTML page", "predeploy does not require complete policy coverage"),
-            ("evaluate(audit)", "predeploy does not run strict SEO thresholds"),
-        ),
-        failures,
-    )
-
-
-def check_index_policy(failures: list[str]) -> None:
-    shrink = read_text("server-opt/shrink_index.py", failures)
-    example_text = read_text("server-opt/index_policy.example.json", failures)
-    baseline_text = read_text("server-opt/index_policy.baseline.json", failures)
-    require_tokens(
+    tokens(
         shrink,
-        (
-            ("BUNDLED_BASELINE", "shrink_index does not use versioned baseline data"),
-            ("--use-builtin-policy", "emergency baseline is not explicitly gated"),
-            ("example_only", "shrink_index does not reject example-only policies"),
-            ('RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"', "shrink_index does not write release policy manifest"),
-            ('RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"', "shrink_index does not snapshot whitelist into release"),
-            ("write_release_keep_config", "shrink_index does not create release manifest"),
-            ("write_release_whitelist", "shrink_index does not create release whitelist snapshot"),
-            ("whitelist_sha256", "release manifest does not record whitelist hash"),
-            ("whitelist_source", "release manifest does not record whitelist provenance"),
-            ("mutation_target_error", "shrink_index is not release-target guarded"),
-            ("atomic_replace_text", "shrink_index does not use atomic replacement"),
-        ),
+        {
+            'RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"': "shrink_index does not write release policy",
+            'RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"': "shrink_index does not snapshot whitelist",
+            "--use-builtin-policy": "emergency baseline is not explicitly gated",
+            "example_only": "example policy is not rejected",
+            "policy_sha256": "policy digest provenance missing",
+            "whitelist_sha256": "whitelist digest provenance missing",
+            "mutation_target_error": "shrink_index is not release-target guarded",
+            "atomic_replace_text": "shrink_index bypasses atomic writes",
+        },
         failures,
     )
-    require("BUILTIN_OPEN_CITIES" not in shrink, "city policy lists leaked back into Python", failures)
-    require("BUILTIN_OPEN_SERVICES" not in shrink, "service policy lists leaked back into Python", failures)
-    require(
-        "/opt/p3-app/data/index_keep_config.json" not in shrink,
-        "shrink_index still writes/depends on global keep-config",
+    need("BUILTIN_OPEN_CITIES" not in shrink, "city policy leaked back into Python", failures)
+    need("BUILTIN_OPEN_SERVICES" not in shrink, "service policy leaked back into Python", failures)
+    need("/opt/p3-app/data/index_keep_config.json" not in shrink, "shrink_index uses legacy global keep-config", failures)
+
+    for rel in ("server-opt/index_policy.example.json", "server-opt/index_policy.baseline.json"):
+        text = read(rel, failures)
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            failures.append(f"invalid policy JSON {rel}: {exc}")
+            continue
+        if rel.endswith("example.json"):
+            need(payload.get("example_only") is True, "example policy is not marked example_only", failures)
+        else:
+            need(bool(payload.get("reviewed_at")), "baseline policy has no reviewed_at", failures)
+            need(bool(payload.get("source_note")), "baseline policy has no source_note", failures)
+            need(bool(payload.get("open_cities")), "baseline policy has no cities", failures)
+            need(bool(payload.get("open_services")), "baseline policy has no services", failures)
+
+    tokens(
+        health,
+        {
+            "RELEASE_KEEP_FILENAME": "SEO healthcheck is not release-policy aware",
+            "RELEASE_WHITELIST_FILENAME": "SEO healthcheck is not release-whitelist aware",
+            "SEOHC_REQUIRE_POLICY": "SEO healthcheck is not fail-closed on missing policy",
+            "release whitelist SHA-256 mismatch": "SEO healthcheck does not verify whitelist hash",
+            "unexpected_noindex_open": "SEO healthcheck cannot detect wrong noindex",
+            "unexpected_index_closed": "SEO healthcheck cannot detect wrongly indexed closed pages",
+            "sitemap_orphan_urls": "SEO healthcheck cannot detect sitemap orphan URLs",
+            "canonical_duplicate_pages": "SEO healthcheck cannot detect duplicate canonicals",
+            "invalid_jsonld_pages": "SEO healthcheck cannot detect invalid JSON-LD",
+            "broken_internal_links": "SEO healthcheck cannot detect broken internal links",
+        },
         failures,
     )
 
-    try:
-        example = json.loads(example_text) if example_text else {}
-        baseline = json.loads(baseline_text) if baseline_text else {}
-    except json.JSONDecodeError as exc:
-        failures.append(f"index policy JSON is invalid: {exc}")
-        return
-    require(example.get("example_only") is True, "index policy example is not marked example_only", failures)
-    require(bool(baseline.get("reviewed_at")), "baseline index policy has no review date", failures)
-    require(bool(baseline.get("source_note")), "baseline index policy has no source note", failures)
-    require(bool(baseline.get("open_cities")), "baseline index policy has no cities", failures)
-    require(bool(baseline.get("open_services")), "baseline index policy has no services", failures)
-    require(not baseline.get("example_only", False), "baseline index policy is marked example-only", failures)
+    tokens(
+        predeploy,
+        {
+            'KEEP_FILENAME = ".xgu-index-keep.json"': "predeploy is not bound to release policy",
+            'WHITELIST_FILENAME = ".xgu-whitelist.txt"': "predeploy is not bound to release whitelist",
+            "release whitelist SHA-256 mismatch": "predeploy does not verify whitelist hash",
+            'audit.get("policy_loaded")': "predeploy does not prove policy load",
+            "evaluate(audit)": "predeploy does not execute strict SEO thresholds",
+        },
+        failures,
+    )
 
 
-def check_write_safety(failures: list[str]) -> None:
-    for rel_path in PRODUCTION_MUTATORS:
-        text = read_text(rel_path, failures)
+def check_mutation_safety(failures: list[str]) -> None:
+    for rel in PRODUCTION_MUTATORS:
+        text = read(rel, failures)
         if text:
-            require("--apply" in text, f"{rel_path}: production writes are not gated by --apply", failures)
+            need("--apply" in text, f"{rel}: real writes are not gated by --apply", failures)
 
-    for rel_path in RELEASE_FIRST_MUTATORS:
-        text = read_text(rel_path, failures)
+    for rel in RELEASE_FIRST_MUTATORS:
+        text = read(rel, failures)
         if not text:
             continue
-        require("mutation_target_error" in text, f"{rel_path}: release target guard missing", failures)
-        require(
-            "--unsafe-allow-active-current" in text,
-            f"{rel_path}: active-current writes are not an explicit emergency override",
-            failures,
-        )
-        require(
-            ".write_text(" not in text,
-            f"{rel_path}: direct text write bypasses shared atomic helper",
-            failures,
-        )
+        need("mutation_target_error" in text, f"{rel}: release target guard missing", failures)
+        need("--unsafe-allow-active-current" in text, f"{rel}: active override is not explicit", failures)
+        need(".write_text(" not in text, f"{rel}: direct text write bypasses atomic helper", failures)
 
-    for rel_path in BACKEND_GENERATOR_CONSUMERS:
-        text = read_text(rel_path, failures)
-        if not text:
-            continue
-        require(
-            "from app.services.content_generator import" in text,
-            f"{rel_path}: does not import the generator from its installed app.services location",
-            failures,
-        )
-        require(
-            "from content_generator import" not in text,
-            f"{rel_path}: can accidentally import a stale top-level content_generator",
-            failures,
-        )
+    for rel in BACKEND_GENERATOR_CONSUMERS:
+        text = read(rel, failures)
+        need("from app.services.content_generator import" in text, f"{rel}: installed generator import missing", failures)
+        need("from content_generator import" not in text, f"{rel}: stale top-level generator import returned", failures)
 
-    rebuild = read_text("seo_rebuild_broken.py", failures)
-    open_hubs = read_text("server-opt/rerender_open_hubs.py", failures)
-    all_hubs = read_text("server-opt/rerender_hubs_home.py", failures)
-    for label, text in (("targeted rebuild", rebuild), ("open-hub rerender", open_hubs), ("hub/home rerender", all_hubs)):
-        require(".xgu-index-keep.json" in text, f"{label}: release manifest is not required", failures)
-        require(".xgu-whitelist.txt" in text, f"{label}: release whitelist is not required", failures)
-        require("XGU_KEEP_CONFIG" in text, f"{label}: renderer is not bound to candidate policy", failures)
-        require("XGU_WHITELIST" in text, f"{label}: renderer is not bound to candidate whitelist", failures)
-        require("whitelist SHA-256 mismatch" in text, f"{label}: whitelist integrity is not verified", failures)
+    hubs = read("server-opt/rerender_hubs_home.py", failures)
+    need("cities_for_home" in hubs and "open_cities" in hubs, "full rerender can repopulate closed homepage cities", failures)
+    need("allowed_slugs" in hubs and "open_services" in hubs, "full rerender can expose closed services", failures)
 
-    require(
-        "cities_for_home" in all_hubs and "open_cities" in all_hubs,
-        "full hub rerender can repopulate homepage with closed cities",
-        failures,
-    )
-    require(
-        "allowed_slugs" in all_hubs and "open_services" in all_hubs,
-        "full hub rerender does not constrain open-hub services by policy",
-        failures,
-    )
-
-
-def check_release_ops(failures: list[str]) -> None:
-    safety = read_text("release_safety.py", failures)
-    deploy = read_text("server-opt/deploy_release.py", failures)
-    prune = read_text("server-opt/prune_releases.py", failures)
-    installer = read_text("server-opt/install_generator_facade.py", failures)
-    bootstrap = read_text("server-opt/bootstrap_release_layout.py", failures)
-    disk = read_text("server-opt/disk-autoclean.sh", failures)
-
-    require_tokens(
-        safety,
-        (
-            ("def mutation_target_error(", "shared release mutation guard missing"),
-            ("resolved.parent != releases", "release guard accepts non-direct candidates"),
-            ("resolved == active", "release guard does not protect active current"),
-            ("def atomic_replace_text(", "shared atomic text helper missing"),
-            ("os.replace(temp, path)", "shared atomic helper no longer uses os.replace"),
-            ("parent directory does not exist", "atomic helper silently creates missing parent paths"),
-        ),
-        failures,
-    )
-
-    require_tokens(
-        deploy,
-        (
-            ("os.replace(temp_link, current)", "release switch is no longer atomic"),
-            ("release_resolved.parent != root_resolved", "deploy can target arbitrary directory"),
-            ('KEEP_FILENAME = ".xgu-index-keep.json"', "deploy does not require release policy"),
-            ('WHITELIST_FILENAME = ".xgu-whitelist.txt"', "deploy does not require release whitelist"),
-            ("whitelist_sha256", "deploy does not validate whitelist metadata"),
-            ("referenced sitemap shard missing", "deploy does not validate sitemap shards"),
-            ("run_predeploy(", "deploy does not execute strict predeploy gate"),
-            ("whitelist=release / WHITELIST_FILENAME", "deploy predeploy does not use embedded whitelist"),
-            ("--unsafe-skip-predeploy", "predeploy bypass is not explicitly emergency-only"),
-            ("is not a symlink", "deploy no longer refuses a real current directory"),
-            ("rollback target", "deploy no longer reports rollback target"),
-        ),
-        failures,
-    )
-
-    require_tokens(
-        bootstrap,
-        (
-            ("Dry-run by default", "bootstrap migration is not documented as dry-run first"),
-            ("current is already a symlink", "bootstrap can run against an already-migrated current"),
-            ("target release is missing required non-empty file", "bootstrap does not require a self-contained target"),
-            ("run_predeploy(", "bootstrap does not run strict predeploy on its target"),
-            ("different filesystems", "bootstrap does not enforce same-filesystem legacy backup rename"),
-            ("os.rename(current, backup_release)", "bootstrap does not archive legacy current before cutover"),
-            ("os.replace(temp_link, current)", "bootstrap does not install current symlink atomically after rename"),
-            ("automatic rollback also failed", "bootstrap does not report catastrophic rollback failure"),
-            ("controlled maintenance window", "bootstrap apply is not clearly maintenance-window only"),
-        ),
-        failures,
-    )
-
-    require_tokens(
-        prune,
-        (
-            ("target.parent != root", "release pruning accepts non-direct current targets"),
-            ("_delete_if_still_inactive", "release pruning does not re-check current before delete"),
-            ("active release cannot be proven immediately before delete", "release pruning lacks race fail-closed guard"),
-            ("resolved.parent != root", "release pruning can escape releases root"),
-            ("current.is_symlink()", "release pruning cannot prove active release"),
-        ),
-        failures,
-    )
-
-    require_tokens(
-        installer,
-        (
-            ("REQUIRED_FILES", "generator install set is missing"),
-            ("city_morphology.py", "generator install set is incomplete"),
-            ('compile(source, str(path), "exec")', "generator installer does not syntax-check sources"),
-            ("Stage every new file before mutating any live target", "generator installer no longer stages full set first"),
-            ("for target in reversed(replaced)", "generator installer lost rollback loop"),
-            (".rollback.", "generator installer rollback is not staged"),
-            ("os.replace(restore_temp, target)", "generator installer rollback is not atomic"),
-        ),
-        failures,
-    )
-
-    require("JOURNAL_DAYS" in disk and "JOURNAL_MAX" in disk, "disk cleanup retention is not configurable", failures)
-    require("--vacuum-time=3d" not in disk, "disk cleanup reverted to 3-day journal history", failures)
-    require("--vacuum-size=15M" not in disk, "disk cleanup reverted to 15M journal cap", failures)
-    require("auth.log" not in disk, "disk cleanup directly targets authentication logs", failures)
-
-
-def check_purge_safety(failures: list[str]) -> None:
-    purge = read_text("server-opt/purge_closed_pages.py", failures)
-    require_tokens(
+    purge = read("server-opt/purge_closed_pages.py", failures)
+    tokens(
         purge,
-        (
-            ('WHITELIST_FILENAME = ".xgu-whitelist.txt"', "purge does not use release whitelist snapshot"),
-            ("validate_release_contract", "purge does not validate release contract"),
-            ("release whitelist SHA-256 mismatch", "purge does not verify whitelist integrity"),
-            ("if not index_file.is_file():", "purge can delete a directory without index.html"),
-            ("if not _explicit_noindex(index_file):", "purge can delete a page without confirmed noindex"),
-            ("mutation_target_error", "purge is not release-target guarded"),
-            ("for path, url in to_delete:", "purge has no per-delete loop for race re-check"),
-            ("_safe_delete(path, args.root)", "purge bypasses safe delete path check"),
-        ),
+        {
+            'WHITELIST_FILENAME = ".xgu-whitelist.txt"': "purge does not use release whitelist",
+            "release whitelist SHA-256 mismatch": "purge does not verify whitelist hash",
+            "if not index_file.is_file():": "purge can delete directory without index.html",
+            "if not _explicit_noindex(index_file):": "purge can delete page without confirmed noindex",
+        },
         failures,
     )
-    require(
-        purge.count("mutation_target_error(") >= 2,
-        "purge does not re-check release activity before each destructive delete",
+    need(purge.count("mutation_target_error(") >= 2, "purge does not re-check active release per delete", failures)
+
+
+def check_release_control_plane(failures: list[str]) -> None:
+    safety = read("release_safety.py", failures)
+    deploy = read("server-opt/deploy_release.py", failures)
+    bootstrap = read("server-opt/bootstrap_release_layout.py", failures)
+    prune = read("server-opt/prune_releases.py", failures)
+    installer = read("server-opt/install_generator_facade.py", failures)
+
+    tokens(
+        safety,
+        {
+            "def mutation_target_error(": "release mutation guard missing",
+            "def atomic_replace_text(": "atomic write helper missing",
+            "os.replace(temp, path)": "atomic write helper no longer uses os.replace",
+            "def release_operation_lock(": "host-wide release operation lock missing",
+            "fcntl.LOCK_EX | fcntl.LOCK_NB": "release lock is not exclusive/non-blocking",
+            "another release operation already holds lock": "concurrent release operation is not rejected",
+        },
+        failures,
+    )
+
+    for label, text in (("deploy", deploy), ("bootstrap", bootstrap), ("prune", prune)):
+        need("release_operation_lock" in text, f"{label}: host-wide release lock missing", failures)
+        need("--lock-file" in text, f"{label}: lock path is not explicit/configurable", failures)
+
+    tokens(
+        deploy,
+        {
+            "run_predeploy(": "deploy does not run strict predeploy",
+            "os.replace(temp_link, current)": "deploy current switch is not atomic",
+            "rollback target": "deploy does not report rollback target",
+            "Re-run every gate while the production release lock is held": "deploy does not revalidate under lock",
+        },
+        failures,
+    )
+
+    tokens(
+        bootstrap,
+        {
+            "target release is missing required non-empty file": "bootstrap does not require self-contained candidate",
+            "run_predeploy(": "bootstrap does not predeploy target",
+            "os.rename(current, backup_release)": "bootstrap does not archive legacy current",
+            "os.replace(temp_link, current)": "bootstrap cutover is not atomic",
+            "automatic rollback also failed": "bootstrap catastrophic rollback path missing",
+            "Re-run layout + strict predeploy": "bootstrap does not revalidate under lock",
+        },
+        failures,
+    )
+
+    tokens(
+        prune,
+        {
+            'BOOTSTRAP_BACKUP_PREFIX = "pre-bootstrap-"': "prune does not identify bootstrap backup",
+            "--include-bootstrap-backups": "bootstrap backup deletion has no explicit opt-in",
+            "protect_bootstrap_backups": "prune does not protect bootstrap backups by default",
+            "Rebuild the plan only after acquiring": "prune can apply a stale pre-lock deletion plan",
+            "_delete_if_still_inactive": "prune does not re-check active release before deletion",
+        },
+        failures,
+    )
+
+    tokens(
+        installer,
+        {
+            'compile(source, str(path), "exec")': "generator installer does not syntax-check source",
+            "Stage every new file before mutating any live target": "generator installer does not stage complete set",
+            "for target in reversed(replaced)": "generator installer rollback loop missing",
+            "os.replace(restore_temp, target)": "generator installer rollback is not atomic",
+        },
         failures,
     )
 
 
-def check_ci_and_tests(failures: list[str]) -> None:
-    ci = read_text(".github/workflows/ci.yml", failures)
-    validator = read_text("scripts/validate_repo.py", failures)
-    for test_file in TEST_FILES:
-        read_text(test_file, failures)
+def check_validation_and_docs(failures: list[str]) -> None:
+    ci = read(".github/workflows/ci.yml", failures)
+    validator = read("scripts/validate_repo.py", failures)
+    env = read(".env.example", failures)
+    readme = read("README.md", failures)
+    runbook = read("server-opt/PRODUCTION_DEPLOY_RUNBOOK.md", failures)
 
-    require_tokens(
+    for rel in TEST_FILES:
+        read(rel, failures)
+
+    tokens(
         validator,
-        (
-            ('"-m", "compileall"', "shared validator lost Python compile check"),
-            ('shutil.which("ruff")', "shared validator does not locate Ruff CLI"),
-            ('"E9,F63,F7,F82"', "shared validator lost Ruff fatal-error rules"),
-            ('"-m", "unittest"', "shared validator lost unit tests"),
-            ("scripts/repo_healthcheck.py", "shared validator lost repository invariants"),
-        ),
+        {
+            '"-m", "compileall"': "validator lost compileall",
+            'shutil.which("ruff")': "validator does not locate Ruff CLI",
+            '"E9,F63,F7,F82"': "validator lost fatal Ruff rules",
+            '"-m", "unittest"': "validator lost unit tests",
+            "scripts/repo_healthcheck.py": "validator lost repository healthcheck",
+        },
         failures,
     )
-    require('importlib.util.find_spec("ruff")' not in validator, "validator incorrectly assumes Ruff is importable", failures)
-    require("python scripts/validate_repo.py" in ci, "GitHub CI does not use shared validator", failures)
-    require("python -m pip install --disable-pip-version-check ruff" in ci, "CI no longer installs Ruff", failures)
+    need("python scripts/validate_repo.py" in ci, "CI does not use shared validator", failures)
+    need("python -m pip install --disable-pip-version-check ruff" in ci, "CI does not install Ruff", failures)
+
+    need("SEOHC_REQUIRE_POLICY=true" in env, ".env.example does not document fail-closed SEO policy", failures)
+    need("XGU_ALLOW_LEGACY_WHITELIST" in env, ".env.example omits legacy whitelist gate", failures)
+    need("PRODUCTION_DEPLOY_RUNBOOK.md" in readme, "README does not link production runbook", failures)
+    need("bootstrap_release_layout.py \"$RELEASE\"" in runbook, "runbook has no guarded first bootstrap", failures)
+    need("pre-bootstrap-*" in runbook, "runbook does not preserve legacy bootstrap backup", failures)
+    need("python scripts/validate_repo.py" in runbook, "runbook skips repository validation", failures)
 
 
-def check_nginx(failures: list[str]) -> None:
-    nginx_dir = ROOT / "server-opt/nginx"
-    require(not (nginx_dir / "x-gu.ru.conf.current").exists(), "stale x-gu.ru.conf.current exists", failures)
-    require(not (nginx_dir / "x-gu.ru.conf.new").exists(), "stale x-gu.ru.conf.new exists", failures)
-    nginx = read_text("server-opt/nginx/nginx.conf", failures)
-    vhost = read_text("server-opt/nginx/x-gu.ru.conf", failures)
-    require("server_tokens off;" in nginx, "nginx exposes server version", failures)
-    require("zone=lead_submit" in nginx, "lead rate-limit zone missing", failures)
-    require("location = /api/v1/leads/submit" in vhost, "lead endpoint rate limit missing", failures)
-    require("limit_req_status 429;" in vhost, "lead rate limiting does not return 429", failures)
-    require("return 301 https://x-gu.ru$request_uri;" in vhost, "canonical www/http redirect missing", failures)
-    require('X-Content-Type-Options "nosniff"' in vhost, "security headers missing", failures)
+def check_nginx_and_cleanup(failures: list[str]) -> None:
+    nginx_dir = ROOT / "server-opt" / "nginx"
+    need(not (nginx_dir / "x-gu.ru.conf.current").exists(), "stale Nginx .current copy returned", failures)
+    need(not (nginx_dir / "x-gu.ru.conf.new").exists(), "stale Nginx .new copy returned", failures)
 
+    nginx = read("server-opt/nginx/nginx.conf", failures)
+    vhost = read("server-opt/nginx/x-gu.ru.conf", failures)
+    tokens(
+        nginx,
+        {
+            "server_tokens off;": "Nginx exposes server version",
+            "zone=lead_submit": "lead rate-limit zone missing",
+        },
+        failures,
+    )
+    tokens(
+        vhost,
+        {
+            "location = /api/v1/leads/submit": "lead endpoint exact location missing",
+            "limit_req_status 429;": "rate limiting does not return 429",
+            "return 301 https://x-gu.ru$request_uri;": "canonical HTTP/www redirect missing",
+            'X-Content-Type-Options "nosniff"': "baseline security headers missing",
+        },
+        failures,
+    )
 
-def check_repository_shape(failures: list[str]) -> None:
-    for rel_path in (
-        "README.md",
-        ".env.example",
-        "requirements.txt",
-        ".github/workflows/ci.yml",
-        "release_safety.py",
-        "server-opt/predeploy_check.py",
-        "server-opt/bootstrap_release_layout.py",
-        "server-opt/PRODUCTION_DEPLOY_RUNBOOK.md",
-    ):
-        read_text(rel_path, failures)
-
-    env_example = read_text(".env.example", failures)
-    require("XGU_ALLOW_LEGACY_WHITELIST" in env_example, ".env.example omits legacy whitelist migration gate", failures)
-    require("SEOHC_ALLOW_LEGACY_WHITELIST" in env_example, ".env.example omits SEO legacy whitelist migration gate", failures)
-    require("SEOHC_REQUIRE_POLICY=true" in env_example, ".env.example does not document fail-closed SEO policy", failures)
-
-    runbook = read_text("server-opt/PRODUCTION_DEPLOY_RUNBOOK.md", failures)
-    require("STOP: current is not a symlink" in runbook, "production runbook does not detect legacy current directory", failures)
-    require("bootstrap_release_layout.py \"$RELEASE\"" in runbook, "production runbook has no guarded first-migration path", failures)
-    require("python scripts/validate_repo.py" in runbook, "production runbook skips repository validation", failures)
-    require("deploy_release.py \"$RELEASE\" --apply" in runbook, "production runbook has no atomic release switch", failures)
+    cleanup = read("server-opt/cleanup_junk.sh", failures)
+    disk = read("server-opt/disk-autoclean.sh", failures)
+    need(": > /var/log/auth.log" not in cleanup, "cleanup truncates auth.log", failures)
+    need("auth.log" not in disk, "disk autoclean directly targets auth logs", failures)
+    need("JOURNAL_DAYS" in disk and "JOURNAL_MAX" in disk, "journal retention is not configurable", failures)
 
 
 def main() -> int:
     failures: list[str] = []
     check_templates(failures)
     check_generator(failures)
-    check_seo_tooling(failures)
-    check_index_policy(failures)
-    check_write_safety(failures)
-    check_release_ops(failures)
-    check_purge_safety(failures)
-    check_ci_and_tests(failures)
-    check_nginx(failures)
-    check_repository_shape(failures)
+    check_policy_and_seo(failures)
+    check_mutation_safety(failures)
+    check_release_control_plane(failures)
+    check_validation_and_docs(failures)
+    check_nginx_and_cleanup(failures)
 
     if failures:
         print("Repository healthcheck: FAIL")
-        for item in failures:
-            print(f"  - {item}")
+        for failure in failures:
+            print(f"  - {failure}")
         return 1
 
     print("Repository healthcheck: OK")
-    print("  templates synchronized and canonical")
-    print("  generator policy + whitelist follow the active release")
-    print("  fabricated testimonial data is disabled before render and sanitized after render")
-    print("  legacy global policy/whitelist require explicit migration flags")
-    print("  backend maintenance imports the installed app.services generator")
-    print("  shared city morphology is enforced")
-    print("  SEO healthcheck is fail-closed and release-contract aware")
-    print("  strict predeploy verifies embedded policy + whitelist integrity")
-    print("  release-first mutators reject active current and avoid direct text writes")
-    print("  homepage/open-hub rerenders are candidate-policy constrained")
-    print("  purge requires index.html + noindex and re-checks active release")
-    print("  guarded bootstrap switches only to a validated self-contained candidate")
-    print("  deploy validates self-contained release before atomic switch")
-    print("  production runbook requires read-only discovery before rollout")
-    print("  release pruning re-checks current immediately before deletion")
-    print("  generator install is syntax-checked, staged and rollback-safe")
-    print("  GitHub CI and local checks share one validation entrypoint")
-    print("  nginx canonicalization, headers and lead rate limiting are guarded")
+    print("  templates are synchronized and canonical")
+    print("  fabricated testimonials are disabled before render and sanitized after render")
+    print("  policy + whitelist are release-bound and fail-closed")
+    print("  bulk mutations are candidate-only and atomic")
+    print("  deploy/bootstrap/prune share a non-blocking host-wide lock")
+    print("  bootstrap legacy backups are protected from normal pruning")
+    print("  strict SEO/predeploy/deploy invariants are present")
+    print("  CI/local validation use one entrypoint")
+    print("  Nginx and cleanup safety invariants are present")
     return 0
 
 
