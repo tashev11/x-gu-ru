@@ -15,6 +15,18 @@ shrink = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(shrink)
 
 
+def reviewed_policy(**overrides):
+    payload = {
+        "policy_version": 1,
+        "reviewed_at": "2026-09-10",
+        "source_note": "unit-test reviewed policy",
+        "open_cities": ["moskva", "moskva", "tver"],
+        "open_services": ["seo-audit-saita", "seo-audit-saita"],
+    }
+    payload.update(overrides)
+    return payload
+
+
 class ShrinkIndexPolicyTests(unittest.TestCase):
     def test_missing_policy_requires_explicit_builtin_override(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -25,20 +37,32 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
     def test_external_policy_is_deduplicated_and_hashed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             policy = Path(temp) / "policy.json"
-            policy.write_text(
-                json.dumps(
-                    {
-                        "open_cities": ["moskva", "moskva", "tver"],
-                        "open_services": ["seo-audit-saita", "seo-audit-saita"],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            policy.write_text(json.dumps(reviewed_policy()), encoding="utf-8")
             cities, services, source, digest = shrink.load_policy(policy, use_builtin=False)
             self.assertEqual(cities, ["moskva", "tver"])
             self.assertEqual(services, ["seo-audit-saita"])
             self.assertEqual(source, str(policy.resolve()))
             self.assertEqual(len(digest), 64)
+
+    def test_production_policy_requires_review_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            policy = Path(temp) / "policy.json"
+            policy.write_text(
+                json.dumps(reviewed_policy(reviewed_at="")),
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                shrink.load_policy(policy, use_builtin=False)
+
+    def test_invalid_slug_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            policy = Path(temp) / "policy.json"
+            policy.write_text(
+                json.dumps(reviewed_policy(open_cities=["moskva", "../tula"])),
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                shrink.load_policy(policy, use_builtin=False)
 
     def test_example_only_policy_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -63,6 +87,27 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
         self.assertTrue(source.startswith("bundled-emergency-baseline:"))
         self.assertEqual(len(digest), 64)
         self.assertTrue(shrink.BUNDLED_BASELINE.is_file())
+
+    def test_whitelist_rejects_external_domain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            whitelist = Path(temp) / "whitelist.txt"
+            whitelist.write_text("https://example.com/moskva/\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
+
+    def test_whitelist_rejects_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            whitelist = Path(temp) / "whitelist.txt"
+            whitelist.write_text("https://x-gu.ru/moskva/../admin/\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
+
+    def test_relative_whitelist_path_is_canonicalized(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            whitelist = Path(temp) / "whitelist.txt"
+            whitelist.write_text("/moskva/seo-audit-saita\n", encoding="utf-8")
+            keep = shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
+            self.assertIn("https://x-gu.ru/moskva/seo-audit-saita/", keep)
 
 
 if __name__ == "__main__":
