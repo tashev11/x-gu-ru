@@ -47,20 +47,14 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
     def test_production_policy_requires_review_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             policy = Path(temp) / "policy.json"
-            policy.write_text(
-                json.dumps(reviewed_policy(reviewed_at="")),
-                encoding="utf-8",
-            )
+            policy.write_text(json.dumps(reviewed_policy(reviewed_at="")), encoding="utf-8")
             with self.assertRaises(SystemExit):
                 shrink.load_policy(policy, use_builtin=False)
 
     def test_invalid_slug_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             policy = Path(temp) / "policy.json"
-            policy.write_text(
-                json.dumps(reviewed_policy(open_cities=["moskva", "../tula"])),
-                encoding="utf-8",
-            )
+            policy.write_text(json.dumps(reviewed_policy(open_cities=["moskva", "../tula"])), encoding="utf-8")
             with self.assertRaises(SystemExit):
                 shrink.load_policy(policy, use_builtin=False)
 
@@ -108,6 +102,66 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
             whitelist.write_text("/moskva/seo-audit-saita\n", encoding="utf-8")
             keep = shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
             self.assertIn("https://x-gu.ru/moskva/seo-audit-saita/", keep)
+
+    def test_isolated_release_candidate_is_valid_apply_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            releases = root / "releases"
+            releases.mkdir()
+            candidate = releases / "candidate"
+            candidate.mkdir()
+            current = root / "current"
+
+            error = shrink._apply_target_error(
+                candidate,
+                current=current,
+                releases_root=releases,
+                allow_active_current=False,
+            )
+            self.assertIsNone(error)
+
+    def test_active_current_is_rejected_without_emergency_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            releases = root / "releases"
+            releases.mkdir()
+            active = releases / "active"
+            active.mkdir()
+            current = root / "current"
+            current.symlink_to(active)
+
+            error = shrink._apply_target_error(
+                active,
+                current=current,
+                releases_root=releases,
+                allow_active_current=False,
+            )
+            self.assertIsNotNone(error)
+            override = shrink._apply_target_error(
+                active,
+                current=current,
+                releases_root=releases,
+                allow_active_current=True,
+            )
+            self.assertIsNone(override)
+
+    def test_non_release_directory_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            releases = root / "releases"
+            releases.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            current = root / "current"
+
+            error = shrink._apply_target_error(
+                outside,
+                current=current,
+                releases_root=releases,
+                allow_active_current=False,
+            )
+            self.assertIsNotNone(error)
+            self.assertIn("direct child", error)
 
 
 if __name__ == "__main__":
