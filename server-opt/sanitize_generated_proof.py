@@ -56,6 +56,17 @@ def main() -> int:
         print("--limit must be >= 0", file=sys.stderr)
         return 1
 
+    if args.apply:
+        target_error = mutation_target_error(
+            args.root,
+            current=args.current,
+            releases_root=args.releases_root,
+            allow_active_current=args.unsafe_allow_active_current,
+        )
+        if target_error:
+            print(f"Refusing apply before scan/write: {target_error}", file=sys.stderr)
+            return 3
+
     scanned = candidates = changed = errors = 0
     for html in args.root.rglob("index.html"):
         if args.limit and scanned >= args.limit:
@@ -91,28 +102,10 @@ def main() -> int:
         print("Refusing successful completion because scan/write errors occurred.", file=sys.stderr)
         return 2
 
-    if not args.apply:
-        if candidates:
-            print("No files changed. Re-run against an isolated release candidate with --apply after review.")
-        return 0
-
-    target_error = mutation_target_error(
-        args.root,
-        current=args.current,
-        releases_root=args.releases_root,
-        allow_active_current=args.unsafe_allow_active_current,
-    )
-    if target_error:
-        # Important: target must be checked before writes. This branch is kept
-        # only as a defensive assertion and should be unreachable below.
-        print(f"Refusing apply: {target_error}", file=sys.stderr)
-        return 3
-
+    if not args.apply and candidates:
+        print("No files changed. Re-run against an isolated release candidate with --apply after review.")
     return 0
 
 
 if __name__ == "__main__":
-    # Validate mutation target before entering the scan/write loop when --apply
-    # is present. argparse is intentionally parsed in main, so main performs the
-    # authoritative check before any write (see early guard below).
     raise SystemExit(main())
