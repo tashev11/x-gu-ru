@@ -1,6 +1,8 @@
-"""Shared path guards for x-gu.ru production-mutating tools."""
+"""Shared path and write guards for x-gu.ru production-mutating tools."""
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 
 
@@ -49,3 +51,16 @@ def mutation_target_error(
     if resolved.parent != releases:
         return f"mutation target must be a direct child of releases root: target={resolved} releases_root={releases}"
     return None
+
+
+def atomic_replace_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
+    """Replace one text file atomically while preserving its permission bits."""
+    mode = path.stat().st_mode & 0o777
+    temp = path.with_name(f".{path.name}.next.{os.getpid()}.{time.time_ns()}")
+    try:
+        temp.write_text(text, encoding=encoding)
+        os.chmod(temp, mode)
+        os.replace(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
