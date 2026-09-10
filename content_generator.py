@@ -1,17 +1,16 @@
 """Safety facade for the legacy x-gu.ru content generator.
 
 The original implementation is preserved verbatim in
-``_content_generator_legacy.py``. Keeping it intact makes this hardening
-change reviewable while allowing the public entry point to enforce production
-invariants before/after rendering.
+``_content_generator_legacy.py``. The facade enforces production invariants
+without a risky full rewrite of the legacy renderer.
 
 Key protections:
-- one resolved template directory and HTML auto-escaping;
-- fail closed when the index keep-config disappears;
-- strip synthetic review/rating schema and synthetic proof sections from
-  generated HTML;
-- use one city morphology implementation across render and repair tools;
-- keep all existing public/underscore functions available to callers.
+- canonical template resolution and HTML auto-escaping;
+- index policy follows the active release through ``current``;
+- missing policy/whitelist fail closed;
+- synthetic review/rating/proof markup is stripped from generated HTML;
+- one city morphology implementation is shared across render/repair tools;
+- the existing legacy API remains available to callers.
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ import json
 import os
 import re
 from pathlib import Path
+from urllib.parse import urlparse
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -27,9 +27,9 @@ try:  # Private-backend package install: app.services.content_generator.
 except ImportError:  # Public-repository/root execution.
     from city_morphology import city_prepositional
 
-try:  # Works when this file is installed as app.services.content_generator.
+try:  # Private-backend package install.
     from . import _content_generator_legacy as _legacy  # type: ignore
-except ImportError:  # Works from this public repository root.
+except ImportError:  # Public-repository/root execution.
     import _content_generator_legacy as _legacy  # type: ignore
 
 
@@ -46,8 +46,9 @@ _TEMPLATE_NAMES = {
     "city_hub_master.html.j2",
     "homepage_master.html.j2",
 }
+_RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
+_DEFAULT_CURRENT_ROOT = Path("/var/www/x-gu.ru/current")
 
-_ORIGINAL_LOAD_KEEP_CONFIG = _legacy._load_keep_config
 _ORIGINAL_RENDER_LANDING = _legacy._render_html_landing
 _ORIGINAL_RENDER_CITY_HUB = _legacy._render_city_hub_html
 
@@ -56,24 +57,34 @@ def _env_true(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in _TRUE_VALUES
 
 
+def _candidate_repo_roots() -> list[Path]:
+    here = Path(__file__).resolve()
+    candidates = [here.parent]
+    # Private backend layout: <repo>/app/services/content_generator.py.
+    if len(here.parents) >= 3:
+        candidates.append(here.parents[2])
+    candidates.append(Path.cwd())
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
 def _candidate_template_dirs() -> list[Path]:
     candidates: list[Path] = []
     explicit = os.getenv("XGU_TEMPLATE_DIR", "").strip()
     if explicit:
         candidates.append(Path(explicit))
 
-    here = Path(__file__).resolve()
+    for root in _candidate_repo_roots():
+        candidates.append(root / "server-opt" / "templates")
 
-    # Canonical repository templates have priority over legacy app/templates.
-    # Public-repo layout: content_generator.py + server-opt/templates.
-    candidates.append(here.parent / "server-opt" / "templates")
-
-    # Private-backend layout: app/services/content_generator.py and repo root.
-    if len(here.parents) >= 3:
-        candidates.append(here.parents[2] / "server-opt" / "templates")
-
-    # Compatibility fallback for older deployments that have not yet moved
-    # their templates to the canonical repository directory.
+    # Compatibility fallback for older deployments.
     candidates.append(Path("app/templates"))
 
     unique: list[Path] = []
@@ -90,33 +101,124 @@ def _resolve_template_dir() -> Path:
     for candidate in _candidate_template_dirs():
         if candidate.is_dir() and all((candidate / name).is_file() for name in _TEMPLATE_NAMES):
             return candidate
-    checked = ", ".join(str(p) for p in _candidate_template_dirs())
+    checked = ", ".join(str(path) for path in _candidate_template_dirs())
     raise RuntimeError(f"No complete x-gu.ru template directory found. Checked: {checked}")
 
 
 def _template_env() -> Environment:
-    """Return a single, explicit, auto-escaping HTML template environment."""
     return Environment(
         loader=FileSystemLoader(str(_resolve_template_dir())),
         autoescape=True,
     )
 
 
-def _load_keep_config() -> dict | None:
-    """Load index policy and fail closed if production policy disappears.
+def _data_file(name: str, env_name: str | None = None) -> Path:
+    if env_name:
+        explicit = os.getenv(env_name, "").strip()
+        if explicit:
+            return Path(explicit).resolve()
+    for root in _candidate_repo_roots():
+        candidate = root / "data" / name
+        if candidate.exists():
+            return candidate.resolve()
+    # Stable diagnostic/fallback path even when the file does not exist.
+    return (_candidate_repo_roots()[0] / "data" / name).resolve()
 
-    Historically a missing ``data/index_keep_config.json`` meant "index every
-    generated page". That is too dangerous for a programmatic-SEO site. An
-    explicit escape hatch exists only for controlled migrations/local work.
+
+def _release_keep_config_path() -> Path:
+    explicit = os.getenv("XGU_KEEP_CONFIG", "").strip()
+    if explicit:
+        path = Path(explicit).resolve()
+        if not path.is_file():
+            raise RuntimeError(f"XGU_KEEP_CONFIG points to a missing file: {path}")
+        return path
+
+    current_root = Path(os.getenv("XGU_CURRENT_ROOT", str(_DEFAULT_CURRENT_ROOT))).resolve()
+    release_manifest = current_root / _RELEASE_KEEP_FILENAME
+    if release_manifest.is_file():
+        return release_manifest
+
+    # Compatibility fallback for the pre-release-manifest deployment layout.
+    legacy = _data_file("index_keep_config.json")
+    if legacy.is_file():
+        return legacy
+
+    return release_manifest
+
+
+def _whitelist_paths() -> set[tuple[str, str | None]]:
+    whitelist = _data_file("whitelist.txt", "XGU_WHITELIST")
+    if not whitelist.is_file():
+        raise RuntimeError(f"Required whitelist is missing: {whitelist}")
+
+    paths: set[tuple[str, str | None]] = set()
+    for line_number, line in enumerate(whitelist.read_text(encoding="utf-8", errors="strict").splitlines(), start=1):
+        value = line.strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme or parsed.netloc:
+            if parsed.scheme != "https" or parsed.netloc != "x-gu.ru":
+                raise RuntimeError(f"Invalid whitelist URL on line {line_number}: {value}")
+            path = parsed.path
+        else:
+            path = value
+        parts = [part for part in path.split("/") if part]
+        if len(parts) == 1:
+            paths.add((parts[0], None))
+        elif len(parts) == 2:
+            paths.add((parts[0], parts[1]))
+        elif parts:
+            raise RuntimeError(f"Unsupported whitelist path depth on line {line_number}: {value}")
+    return paths
+
+
+def _load_keep_config() -> dict | None:
+    """Load the policy bound to the active release and fail closed if absent.
+
+    New deployments store ``.xgu-index-keep.json`` inside each release. Because
+    ``current`` is a symlink, switching a release also switches its index policy
+    atomically. ``XGU_KEEP_CONFIG`` can explicitly point candidate rendering at
+    a not-yet-active release manifest. The old ``data/index_keep_config.json``
+    remains a temporary compatibility fallback only.
     """
-    keep = _ORIGINAL_LOAD_KEEP_CONFIG()
-    if keep is None and not _env_true("XGU_ALLOW_MISSING_KEEP_CONFIG"):
+    path = _release_keep_config_path()
+    if not path.is_file():
+        if _env_true("XGU_ALLOW_MISSING_KEEP_CONFIG"):
+            return None
         raise RuntimeError(
-            "data/index_keep_config.json is missing; refusing to treat every "
-            "generated page as indexable. Set XGU_ALLOW_MISSING_KEEP_CONFIG=1 "
-            "only for an intentional migration/local run."
+            f"Index keep-config is missing: {path}. Refusing to treat generated pages as indexable. "
+            "Use XGU_ALLOW_MISSING_KEEP_CONFIG=1 only for an intentional migration/local run."
         )
-    return keep
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Index keep-config is invalid: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Index keep-config root must be an object: {path}")
+
+    open_cities = set(payload.get("open_cities") or [])
+    open_services = set(payload.get("open_services") or [])
+    if not open_cities or not open_services:
+        raise RuntimeError(f"Index keep-config has empty open_cities/open_services: {path}")
+
+    if path.name == _RELEASE_KEEP_FILENAME:
+        source = str(payload.get("policy_source") or "").strip()
+        digest = str(payload.get("policy_sha256") or "").strip().lower()
+        if not source:
+            raise RuntimeError(f"Release keep-config has no policy_source: {path}")
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise RuntimeError(f"Release keep-config has invalid policy_sha256: {path}")
+
+    return {
+        "open_cities": open_cities,
+        "open_services": open_services,
+        "whitelist_paths": _whitelist_paths(),
+        "policy_source": payload.get("policy_source"),
+        "policy_sha256": payload.get("policy_sha256"),
+        "path": path,
+    }
 
 
 def _page_is_open(city_slug: str, service_slug: str | None = None) -> bool:
@@ -158,8 +260,6 @@ def _sanitize_jsonld(html: str) -> str:
         except (TypeError, ValueError, json.JSONDecodeError):
             return match.group(0)
 
-        # A generated city/service page is not evidence of a physical office in
-        # that city. The separate Organization + Service schema is sufficient.
         if isinstance(payload, dict) and payload.get("@type") == "LocalBusiness":
             return ""
 
@@ -201,8 +301,6 @@ def _remove_reviews_section(html: str) -> str:
             start = html.rfind("<section", 0, pos)
             html = _remove_balanced_from_start(html, start, "section")
             break
-    # Remove navigation/footer links that would otherwise point to a deleted
-    # synthetic-review section.
     html = re.sub(
         r'<a\b[^>]*href=["\']#reviews["\'][^>]*>.*?</a>',
         "",
@@ -221,19 +319,11 @@ def _remove_synthetic_counter_panel(html: str) -> str:
 
 
 def _sanitize_generated_html(html: str) -> str:
-    """Remove generated proof that is not backed by a real data source."""
     html = _sanitize_jsonld(html)
     html = _remove_reviews_section(html)
-
-    # City-hub KPIs were deterministic hash-derived numbers, not analytics.
     html = _remove_section_containing(html, "рост органики")
-
-    # Landing counters are profile-generated marketing numbers rather than
-    # measured page/client metrics.
     html = _remove_synthetic_counter_panel(html)
 
-    # Remove/neutralize unsupported blanket proof claims while preserving the
-    # actual offer and page layout.
     replacements = {
         "50+ проектов": "Работа по этапам",
         "TOP-10 гарантии": "Прозрачные отчёты",
@@ -254,8 +344,7 @@ def _render_city_hub_html(*args, **kwargs) -> str:
     return _sanitize_generated_html(_ORIGINAL_RENDER_CITY_HUB(*args, **kwargs))
 
 
-# Patch the legacy module globals too: legacy functions such as
-# render_sites_to_hugo resolve these names in their own module namespace.
+# Patch legacy globals so legacy functions resolve hardened hooks internally.
 _legacy._template_env = _template_env
 _legacy._load_keep_config = _load_keep_config
 _legacy._page_is_open = _page_is_open
@@ -263,7 +352,6 @@ _legacy._city_prepositional = city_prepositional
 _legacy._render_html_landing = _render_html_landing
 _legacy._render_city_hub_html = _render_city_hub_html
 
-# Ensure direct imports from this facade resolve to the hardened functions.
 globals().update(
     {
         "_template_env": _template_env,
