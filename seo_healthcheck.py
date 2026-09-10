@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 
 RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
+LEGACY_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
 
 
 def _as_int(name: str, default: int) -> int:
@@ -243,11 +244,15 @@ def _expected_indexable(page_url: str, base_url: str, policy: dict | None) -> bo
 def _default_keep_config(root: Path) -> Path:
     explicit = os.getenv("SEOHC_KEEP_CONFIG", "").strip()
     if explicit:
-        return Path(explicit)
-    release_manifest = root / RELEASE_KEEP_FILENAME
+        return Path(explicit).resolve()
+
+    release_manifest = root.resolve() / RELEASE_KEEP_FILENAME
     if release_manifest.is_file():
         return release_manifest
-    return Path("/opt/p3-app/data/index_keep_config.json")
+
+    if _as_bool("SEOHC_ALLOW_LEGACY_KEEP_CONFIG", False) and LEGACY_KEEP_CONFIG.is_file():
+        return LEGACY_KEEP_CONFIG
+    return release_manifest
 
 
 def run_audit(
@@ -431,6 +436,9 @@ def evaluate(audit: dict) -> tuple[bool, list[str]]:
     }
 
     breaches: list[str] = []
+    if _as_bool("SEOHC_REQUIRE_POLICY", True) and not audit.get("policy_loaded"):
+        breaches.append(f"policy_not_loaded: {audit.get('keep_config')}")
+
     for key in (
         "missing_title",
         "missing_description",
