@@ -19,7 +19,7 @@ DEFAULT_ROOT = Path("/var/www/x-gu.ru/current")
 sys.path.insert(0, str(APP_ROOT))
 os.chdir(APP_ROOT)
 
-from content_generator import _sanitize_generated_html  # noqa: E402
+from app.services.content_generator import _sanitize_generated_html  # noqa: E402
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
