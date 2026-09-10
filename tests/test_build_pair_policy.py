@@ -45,6 +45,63 @@ class BuildPairPolicyTests(unittest.TestCase):
         self.assertNotIn("moskva/prodvizhenie-saita", policy["open_pairs"])
         self.assertEqual(review["counts"]["candidate_pairs"], 2)
 
+    def test_quality_hard_fail_blocks_pair_even_with_search_signal(self) -> None:
+        url = "https://x-gu.ru/moskva/seo-audit-saita/"
+        evidence = {
+            "urls": [{"url": url, "yandex_in_search": True, "gsc_impressions": 100, "gsc_clicks": 5}]
+        }
+        quality = {
+            "pairs": [{"url": url, "quality_state": "improve_before_index", "flags": ["thin_content"]}]
+        }
+        policy, review = mod.build_candidate(
+            evidence,
+            quality_payload=quality,
+            require_quality=True,
+            min_impressions=5,
+            min_clicks=1,
+        )
+        self.assertEqual(policy["open_pairs"], [])
+        self.assertEqual(review["counts"]["rejected_quality_hard_fail"], 1)
+        self.assertEqual(review["rejected_pairs"][0]["rejection_reason"], "quality_hard_fail")
+
+    def test_missing_quality_blocks_pair_when_quality_is_required(self) -> None:
+        url = "https://x-gu.ru/tver/prodvizhenie-saita/"
+        policy, review = mod.build_candidate(
+            {"urls": [{"url": url, "gsc_impressions": 30}]},
+            quality_payload={"pairs": []},
+            require_quality=True,
+            min_impressions=5,
+            min_clicks=1,
+        )
+        self.assertEqual(policy["open_pairs"], [])
+        self.assertEqual(review["counts"]["rejected_quality_missing"], 1)
+
+    def test_clean_quality_allows_pair(self) -> None:
+        url = "https://x-gu.ru/moskva/seo-audit-saita/"
+        policy, review = mod.build_candidate(
+            {"urls": [{"url": url, "gsc_impressions": 30}]},
+            quality_payload={"pairs": [{"url": url, "quality_state": "clean", "flags": []}]},
+            require_quality=True,
+            min_impressions=5,
+            min_clicks=1,
+        )
+        self.assertEqual(policy["open_pairs"], ["moskva/seo-audit-saita"])
+        self.assertEqual(review["pairs"][0]["recommendation"], "candidate_open")
+
+    def test_near_duplicate_is_kept_for_manual_similarity_review(self) -> None:
+        url = "https://x-gu.ru/moskva/seo-audit-saita/"
+        policy, review = mod.build_candidate(
+            {"urls": [{"url": url, "yandex_in_search": True}]},
+            quality_payload={
+                "pairs": [{"url": url, "quality_state": "review_similarity", "flags": ["near_duplicate"]}]
+            },
+            require_quality=True,
+            min_impressions=999,
+            min_clicks=999,
+        )
+        self.assertEqual(policy["open_pairs"], ["moskva/seo-audit-saita"])
+        self.assertEqual(review["pairs"][0]["recommendation"], "review_similarity")
+
     def test_weak_google_only_pair_is_not_selected(self) -> None:
         policy, review = mod.build_candidate(
             {
@@ -63,18 +120,12 @@ class BuildPairPolicyTests(unittest.TestCase):
         self.assertEqual(policy["open_cities"], [])
         self.assertEqual(review["counts"]["rejected_below_threshold"], 1)
 
-    def test_manual_or_yandex_signal_selects_pair(self) -> None:
+    def test_manual_or_yandex_signal_selects_pair_in_evidence_only_mode(self) -> None:
         policy, _review = mod.build_candidate(
             {
                 "urls": [
-                    {
-                        "url": "https://x-gu.ru/kazan/service-a/",
-                        "manual_protected": True,
-                    },
-                    {
-                        "url": "https://x-gu.ru/perm/service-b/",
-                        "yandex_in_search": True,
-                    },
+                    {"url": "https://x-gu.ru/kazan/service-a/", "manual_protected": True},
+                    {"url": "https://x-gu.ru/perm/service-b/", "yandex_in_search": True},
                 ]
             },
             min_impressions=999,
@@ -84,15 +135,7 @@ class BuildPairPolicyTests(unittest.TestCase):
 
     def test_strong_city_hub_is_kept_without_forcing_service_matrix(self) -> None:
         policy, _review = mod.build_candidate(
-            {
-                "urls": [
-                    {
-                        "url": "https://x-gu.ru/moskva/",
-                        "gsc_impressions": 100,
-                        "gsc_clicks": 5,
-                    }
-                ]
-            },
+            {"urls": [{"url": "https://x-gu.ru/moskva/", "gsc_impressions": 100, "gsc_clicks": 5}]},
             min_impressions=5,
             min_clicks=1,
         )
