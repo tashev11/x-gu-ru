@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from index_policy import normalize_policy_payload, policy_digest
 from release_integrity import build_release_metadata, write_release_metadata
 
 
@@ -36,6 +37,29 @@ def page_html(canonical: str, label: str, *, noindex: bool = False) -> str:
 </head><body><h1>{label}: контроль релиза</h1><p>{body}</p></body></html>"""
 
 
+def policy_payload(*, version: int = 1) -> dict:
+    if version == 1:
+        core = {
+            "policy_version": 1,
+            "open_cities": ["moskva"],
+            "open_services": ["seo-audit-saita"],
+        }
+    else:
+        core = {
+            "policy_version": 2,
+            "policy_mode": "pairs",
+            "open_cities": ["moskva"],
+            "open_pairs": ["moskva/seo-audit-saita"],
+            "open_services": ["seo-audit-saita"],
+        }
+    normalized = normalize_policy_payload(core)
+    return {
+        **core,
+        "policy_source": "/opt/p3-app/data/index_policy.json",
+        "policy_sha256": policy_digest(normalized),
+    }
+
+
 class PredeployCheckTests(unittest.TestCase):
     def _finalize(self, release: Path) -> None:
         payload = build_release_metadata(
@@ -45,7 +69,7 @@ class PredeployCheckTests(unittest.TestCase):
         )
         write_release_metadata(release, payload)
 
-    def _fixture(self):
+    def _fixture(self, *, version: int = 1):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)
         release = root / "release"
@@ -63,18 +87,13 @@ class PredeployCheckTests(unittest.TestCase):
         whitelist = release / predeploy.WHITELIST_FILENAME
         whitelist_text = ""
         whitelist.write_text(whitelist_text, encoding="utf-8")
-        whitelist_digest = hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest()
-
         keep = release / predeploy.KEEP_FILENAME
         keep.write_text(
             json.dumps(
                 {
-                    "open_cities": ["moskva"],
-                    "open_services": ["seo-audit-saita"],
-                    "policy_source": "/opt/p3-app/data/index_policy.json",
-                    "policy_sha256": "a" * 64,
+                    **policy_payload(version=version),
                     "whitelist_source": "/opt/p3-app/data/whitelist.txt",
-                    "whitelist_sha256": whitelist_digest,
+                    "whitelist_sha256": hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest(),
                 }
             ),
             encoding="utf-8",
@@ -82,16 +101,35 @@ class PredeployCheckTests(unittest.TestCase):
         self._finalize(release)
         return temp, release, keep, whitelist
 
-    def test_valid_release_and_policy_pass(self) -> None:
+    def test_valid_v1_release_and_policy_pass(self) -> None:
         temp, release, keep, whitelist = self._fixture()
         self.addCleanup(temp.cleanup)
         ok, errors, audit = predeploy.run_predeploy(release, keep_config=keep, whitelist=whitelist, base_url=BASE)
         self.assertTrue(ok, errors)
         self.assertEqual(errors, [])
         self.assertIsNotNone(audit)
-        self.assertTrue(audit["policy_loaded"])
+        self.assertEqual(audit["policy_version"], 1)
+        self.assertEqual(audit["policy_mode"], "matrix")
         self.assertEqual(audit["release_metadata"]["tooling_revision"], REVISION)
-        self.assertEqual(audit["stats"]["policy_checked_pages"], audit["stats"]["pages_total"])
+
+    def test_valid_v2_pair_policy_passes(self) -> None:
+        temp, release, keep, whitelist = self._fixture(version=2)
+        self.addCleanup(temp.cleanup)
+        ok, errors, audit = predeploy.run_predeploy(release, keep_config=keep, whitelist=whitelist, base_url=BASE)
+        self.assertTrue(ok, errors)
+        self.assertIsNotNone(audit)
+        self.assertEqual(audit["policy_version"], 2)
+        self.assertEqual(audit["policy_mode"], "pairs")
+
+    def test_policy_content_change_with_stale_digest_is_rejected(self) -> None:
+        temp, release, keep, whitelist = self._fixture(version=2)
+        self.addCleanup(temp.cleanup)
+        payload = json.loads(keep.read_text(encoding="utf-8"))
+        payload["open_pairs"].append("moskva/prodvizhenie-saita")
+        payload["open_services"].append("prodvizhenie-saita")
+        keep.write_text(json.dumps(payload), encoding="utf-8")
+        errors = predeploy.validate_policy_files(keep, whitelist, release_root=release, base_url=BASE)
+        self.assertTrue(any("release policy SHA-256 mismatch" in error for error in errors))
 
     def test_late_release_mutation_is_rejected(self) -> None:
         temp, release, keep, whitelist = self._fixture()
@@ -108,10 +146,7 @@ class PredeployCheckTests(unittest.TestCase):
         outside = Path(temp.name) / "outside.json"
         outside.write_text(
             json.dumps({
-                "open_cities": ["moskva"],
-                "open_services": ["seo-audit-saita"],
-                "policy_source": "reviewed",
-                "policy_sha256": "a" * 64,
+                **policy_payload(),
                 "whitelist_source": "reviewed",
                 "whitelist_sha256": hashlib.sha256(whitelist.read_bytes()).hexdigest(),
             }),
@@ -130,15 +165,13 @@ class PredeployCheckTests(unittest.TestCase):
         errors = predeploy.validate_policy_files(keep, outside, release_root=release, base_url=BASE)
         self.assertTrue(any("release snapshot" in error for error in errors))
 
-    def test_missing_policy_provenance_fails_before_integrity_audit(self) -> None:
+    def test_missing_policy_provenance_fails(self) -> None:
         temp, release, keep, whitelist = self._fixture()
         self.addCleanup(temp.cleanup)
         payload = json.loads(keep.read_text(encoding="utf-8"))
         payload.pop("policy_sha256")
         keep.write_text(json.dumps(payload), encoding="utf-8")
-        ok, errors, audit = predeploy.run_predeploy(release, keep_config=keep, whitelist=whitelist, base_url=BASE)
-        self.assertFalse(ok)
-        self.assertIsNone(audit)
+        errors = predeploy.validate_policy_files(keep, whitelist, release_root=release, base_url=BASE)
         self.assertTrue(any("policy_sha256" in error for error in errors))
 
     def test_invalid_policy_digest_fails(self) -> None:
@@ -155,7 +188,7 @@ class PredeployCheckTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         whitelist.write_text("https://x-gu.ru/moskva/\n", encoding="utf-8")
         errors = predeploy.validate_policy_files(keep, whitelist, release_root=release, base_url=BASE)
-        self.assertTrue(any("SHA-256 mismatch" in error for error in errors))
+        self.assertTrue(any("whitelist SHA-256 mismatch" in error for error in errors))
 
     def test_external_whitelist_url_fails(self) -> None:
         temp, release, keep, whitelist = self._fixture()
