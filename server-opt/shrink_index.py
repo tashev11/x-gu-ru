@@ -2,9 +2,9 @@
 """Manage the indexable core of an x-gu.ru release candidate.
 
 Dry-run by default. Apply writes only to an isolated release candidate unless an
-explicit emergency override allows active current. The resulting keep-config is
-stored inside the release as ``.xgu-index-keep.json`` so switching ``current``
-also switches the policy atomically.
+explicit emergency override allows active current. The resulting policy and
+whitelist are stored inside the release so switching ``current`` switches the
+entire indexability contract atomically.
 """
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
 DEFAULT_POLICY = Path(os.getenv("XGU_INDEX_POLICY", "/opt/p3-app/data/index_policy.json"))
 BUNDLED_BASELINE = Path(__file__).resolve().with_name("index_policy.baseline.json")
 RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
+RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"
 BASE = "https://x-gu.ru"
 CANONICAL_HOST = "x-gu.ru"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -124,11 +125,44 @@ def _canonical_whitelist_url(value: str) -> str:
     decoded_parts = [unquote(part) for part in parsed.path.split("/") if part]
     if any(part in {".", ".."} or "/" in part or "\\" in part for part in decoded_parts):
         raise SystemExit(f"Whitelist URL contains unsafe path segment: {value}")
+    if len(decoded_parts) > 2:
+        raise SystemExit(f"Whitelist URL has unsupported path depth: {value}")
 
     path = parsed.path or "/"
     if path != "/" and not path.endswith("/"):
         path += "/"
     return BASE + path
+
+
+def load_whitelist_urls(whitelist: Path) -> set[str]:
+    if not whitelist.is_file():
+        raise SystemExit(
+            f"Whitelist not found: {whitelist}. Refusing index-core changes because protected URLs are unknown."
+        )
+
+    urls: set[str] = set()
+    try:
+        lines = whitelist.read_text(encoding="utf-8", errors="strict").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise SystemExit(f"Cannot read whitelist: {whitelist}: {exc}") from exc
+
+    for line_number, line in enumerate(lines, start=1):
+        value = line.strip()
+        if not value:
+            continue
+        try:
+            urls.add(_canonical_whitelist_url(value))
+        except SystemExit as exc:
+            raise SystemExit(f"Invalid whitelist line {line_number}: {exc}") from exc
+    return urls
+
+
+def _whitelist_snapshot_text(urls: set[str]) -> str:
+    return "".join(f"{url}\n" for url in sorted(urls))
+
+
+def whitelist_digest(urls: set[str]) -> str:
+    return hashlib.sha256(_whitelist_snapshot_text(urls).encode("utf-8")).hexdigest()
 
 
 def url_for(html: Path, web_root: Path) -> str:
@@ -138,24 +172,14 @@ def url_for(html: Path, web_root: Path) -> str:
     return f"{BASE}/{rel.as_posix()}/"
 
 
-def build_keep_urls(whitelist: Path, open_cities: list[str], open_services: list[str]) -> set[str]:
-    if not whitelist.is_file():
-        raise SystemExit(
-            f"Whitelist not found: {whitelist}. Refusing index-core changes because protected URLs are unknown."
-        )
+def build_keep_urls_from_whitelist(
+    whitelist_urls: set[str],
+    open_cities: list[str],
+    open_services: list[str],
+) -> set[str]:
     _validate_slugs(open_cities, "city")
     _validate_slugs(open_services, "service")
-
-    keep: set[str] = set()
-    for line_number, line in enumerate(whitelist.read_text(encoding="utf-8", errors="strict").splitlines(), start=1):
-        value = line.strip()
-        if not value:
-            continue
-        try:
-            keep.add(_canonical_whitelist_url(value))
-        except SystemExit as exc:
-            raise SystemExit(f"Invalid whitelist line {line_number}: {exc}") from exc
-
+    keep = set(whitelist_urls)
     keep.add(f"{BASE}/")
     keep.add(f"{BASE}/privacy/")
     for city in open_cities:
@@ -163,6 +187,10 @@ def build_keep_urls(whitelist: Path, open_cities: list[str], open_services: list
         for service in open_services:
             keep.add(f"{BASE}/{city}/{service}/")
     return keep
+
+
+def build_keep_urls(whitelist: Path, open_cities: list[str], open_services: list[str]) -> set[str]:
+    return build_keep_urls_from_whitelist(load_whitelist_urls(whitelist), open_cities, open_services)
 
 
 def noindex_text(text: str) -> str | None:
@@ -234,6 +262,12 @@ def apply_page_plan(operations: list[tuple[Path, str]]) -> tuple[int, int]:
     return changed, errors
 
 
+def write_release_whitelist(web_root: Path, urls: set[str]) -> Path:
+    path = web_root / RELEASE_WHITELIST_FILENAME
+    atomic_replace_text(path, _whitelist_snapshot_text(urls))
+    return path
+
+
 def write_release_keep_config(
     web_root: Path,
     open_cities: list[str],
@@ -241,6 +275,8 @@ def write_release_keep_config(
     *,
     policy_source: str,
     policy_sha256: str,
+    whitelist_source: str,
+    whitelist_sha256: str,
 ) -> Path:
     path = web_root / RELEASE_KEEP_FILENAME
     payload = {
@@ -248,6 +284,8 @@ def write_release_keep_config(
         "open_services": open_services,
         "policy_source": policy_source,
         "policy_sha256": policy_sha256,
+        "whitelist_source": whitelist_source,
+        "whitelist_sha256": whitelist_sha256,
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
     atomic_replace_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
@@ -305,12 +343,16 @@ def main() -> int:
         args.policy,
         use_builtin=args.use_builtin_policy,
     )
-    keep = build_keep_urls(args.whitelist, open_cities, open_services)
+    whitelist_urls = load_whitelist_urls(args.whitelist)
+    whitelist_sha256 = whitelist_digest(whitelist_urls)
+    keep = build_keep_urls_from_whitelist(whitelist_urls, open_cities, open_services)
     print(f"policy source: {policy_source}")
     print(f"policy sha256: {policy_sha256}")
+    print(f"whitelist source: {args.whitelist.resolve()}")
+    print(f"whitelist sha256: {whitelist_sha256}")
     print(
         f"policy: cities={len(open_cities)} services={len(open_services)} "
-        f"protected/indexable URLs={len(keep)}"
+        f"whitelist_urls={len(whitelist_urls)} protected/indexable_urls={len(keep)}"
     )
 
     operations, scanned, kept, errors = make_plan(args.web_root, keep)
@@ -341,19 +383,22 @@ def main() -> int:
     changed, apply_errors = apply_page_plan(operations)
     if apply_errors:
         print(
-            "Page application failed; sitemap/policy manifest were not rewritten. "
+            "Page application failed; release metadata/sitemap were not rewritten. "
             "Discard and rebuild this release candidate.",
             file=sys.stderr,
         )
         return 4
 
     try:
+        whitelist_path = write_release_whitelist(args.web_root, whitelist_urls)
         keep_path = write_release_keep_config(
             args.web_root,
             open_cities,
             open_services,
             policy_source=policy_source,
             policy_sha256=policy_sha256,
+            whitelist_source=str(args.whitelist.resolve()),
+            whitelist_sha256=whitelist_sha256,
         )
         write_sitemap(args.web_root, keep)
     except Exception as exc:  # noqa: BLE001
@@ -365,7 +410,7 @@ def main() -> int:
 
     print(
         f"[APPLIED] page_changes={changed} release_keep_config={keep_path} "
-        f"sitemap_urls={len(keep)}"
+        f"release_whitelist={whitelist_path} sitemap_urls={len(keep)}"
     )
     return 0
 
