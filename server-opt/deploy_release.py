@@ -18,6 +18,7 @@ for path in (str(SERVER_OPT), str(REPO_ROOT)):
     if path not in sys.path:
         sys.path.insert(0, path)
 
+from index_policy import normalize_policy_payload, policy_digest  # noqa: E402
 from predeploy_check import run_predeploy  # noqa: E402
 from release_integrity import RELEASE_METADATA_FILENAME  # noqa: E402
 from release_safety import DEFAULT_RELEASE_LOCK, release_operation_lock  # noqa: E402
@@ -111,16 +112,24 @@ def _validate_keep_manifest(path: Path) -> list[str]:
         return [f"{KEEP_FILENAME} root must be a JSON object"]
 
     errors: list[str] = []
-    if not payload.get("open_cities"):
-        errors.append(f"{KEEP_FILENAME} has no open_cities")
-    if not payload.get("open_services"):
-        errors.append(f"{KEEP_FILENAME} has no open_services")
+    try:
+        policy = normalize_policy_payload(payload)
+    except ValueError as exc:
+        errors.append(f"{KEEP_FILENAME} policy is invalid: {exc}")
+        policy = None
+
     for key in ("policy_source", "whitelist_source"):
         if not str(payload.get(key) or "").strip():
             errors.append(f"{KEEP_FILENAME} has no {key}")
     for key in ("policy_sha256", "whitelist_sha256"):
         if not _valid_sha256(payload.get(key)):
             errors.append(f"{KEEP_FILENAME} has invalid {key}")
+
+    if policy is not None and _valid_sha256(payload.get("policy_sha256")):
+        expected = str(payload.get("policy_sha256")).strip().lower()
+        actual = policy_digest(policy)
+        if actual != expected:
+            errors.append(f"{KEEP_FILENAME} policy SHA-256 mismatch: manifest={expected} actual={actual}")
     return errors
 
 
@@ -207,7 +216,7 @@ def main() -> int:
     parser.add_argument(
         "--unsafe-skip-predeploy",
         action="store_true",
-        help="emergency-only override: skip strict SEO/integrity predeploy gate",
+        help="emergency-only override: skip strict SEO/integrity predeploy gate, not structural policy validation",
     )
     parser.add_argument("--apply", action="store_true", help="atomically switch current to release_dir")
     args = parser.parse_args()
@@ -225,12 +234,13 @@ def main() -> int:
                 print(f"  - {error}", file=sys.stderr)
             return code, None, audit
         if args.unsafe_skip_predeploy:
-            print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
+            print("WARNING: strict pre-deploy gate skipped by emergency override; structural policy checks still passed", file=sys.stderr)
         else:
             print("Strict pre-deploy gate: OK")
         previous = _current_target(current)
         if audit and audit.get("release_metadata"):
             metadata = audit["release_metadata"]
+            print(f"policy:           v{audit.get('policy_version')} {audit.get('policy_mode')}")
             print(f"tooling revision: {metadata['tooling_revision']}")
             print(f"release sha256:   {metadata['content_sha256']}")
         return 0, previous, audit
@@ -255,7 +265,6 @@ def main() -> int:
 
     try:
         with release_operation_lock(args.lock_file.resolve()):
-            # Re-run every gate while the production release lock is held.
             code, previous, _audit = validate_and_report()
             if code:
                 return code
