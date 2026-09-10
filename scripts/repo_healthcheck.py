@@ -2,8 +2,7 @@
 """Repository-level safety checks for x-gu.ru.
 
 These checks deliberately avoid importing the private ``app.*`` backend. They
-protect repository invariants that must remain true before code reaches a
-production server.
+protect invariants that must remain true before code reaches production.
 """
 from __future__ import annotations
 
@@ -36,6 +35,20 @@ PRODUCTION_MUTATORS = (
     "server-opt/install_generator_facade.py",
 )
 
+RELEASE_FIRST_MUTATORS = (
+    "seo_inplace_fix.py",
+    "seo_title_extend.py",
+    "seo_rebuild_broken.py",
+    "server-opt/shrink_index.py",
+    "server-opt/purge_closed_pages.py",
+    "server-opt/rerender_hubs_home.py",
+    "server-opt/rerender_open_hubs.py",
+    "server-opt/inject_chat_widget.py",
+    "server-opt/swap_tailwind_cdn.py",
+    "server-opt/patch_landing_fixes.py",
+    "server-opt/sanitize_generated_proof.py",
+)
+
 TEST_FILES = (
     "tests/test_city_morphology.py",
     "tests/test_seo_healthcheck.py",
@@ -44,6 +57,8 @@ TEST_FILES = (
     "tests/test_install_generator_facade.py",
     "tests/test_shrink_index_policy.py",
     "tests/test_predeploy_check.py",
+    "tests/test_release_safety.py",
+    "tests/test_purge_closed_pages.py",
 )
 
 
@@ -97,7 +112,11 @@ def check_generator(failures: list[str]) -> None:
         facade,
         (
             ("autoescape=True", "generator HTML autoescape is not enforced"),
-            ("XGU_ALLOW_MISSING_KEEP_CONFIG", "missing index-policy fail-closed guard"),
+            ("_RELEASE_KEEP_FILENAME = \".xgu-index-keep.json\"", "release-bound keep manifest is missing"),
+            ("XGU_KEEP_CONFIG", "candidate policy override is missing"),
+            ("XGU_CURRENT_ROOT", "active release root is not configurable"),
+            ("XGU_ALLOW_LEGACY_KEEP_CONFIG", "legacy keep-config fallback is not explicitly gated"),
+            ("XGU_ALLOW_MISSING_KEEP_CONFIG", "missing-policy migration escape hatch is missing"),
             ("_sanitize_generated_html", "generated HTML sanitizer missing"),
             ('key in {"aggregateRating", "review"}', "rating/review schema sanitizer missing"),
             ('payload.get("@type") == "LocalBusiness"', "generated LocalBusiness sanitizer missing"),
@@ -108,7 +127,7 @@ def check_generator(failures: list[str]) -> None:
         failures,
     )
     require("reviewCount" not in facade, "synthetic review data leaked into public facade", failures)
-    canonical_pos = facade.find('here.parent / "server-opt" / "templates"')
+    canonical_pos = facade.find('candidates.append(root / "server-opt" / "templates")')
     fallback_pos = facade.find('candidates.append(Path("app/templates"))')
     require(canonical_pos >= 0, "canonical repository template path missing", failures)
     require(fallback_pos >= 0, "legacy app/templates fallback missing", failures)
@@ -117,23 +136,32 @@ def check_generator(failures: list[str]) -> None:
         "generator prefers legacy app/templates over canonical templates",
         failures,
     )
+    legacy_gate = facade.find('if _env_true("XGU_ALLOW_LEGACY_KEEP_CONFIG")')
+    legacy_lookup = facade.find('_data_file("index_keep_config.json")')
+    require(
+        legacy_gate >= 0 and legacy_lookup > legacy_gate,
+        "legacy global keep-config can be selected without an explicit migration flag",
+        failures,
+    )
 
 
 def check_seo_tooling(failures: list[str]) -> None:
     repair = read_text("seo_inplace_fix.py", failures)
     health = read_text("seo_healthcheck.py", failures)
     predeploy = read_text("server-opt/predeploy_check.py", failures)
-    require("from city_morphology import city_prepositional" in repair,
-            "SEO repair duplicates city morphology", failures)
+    require("from city_morphology import city_prepositional" in repair, "SEO repair duplicates city morphology", failures)
     require_tokens(
         health,
         (
+            ("RELEASE_KEEP_FILENAME", "SEO healthcheck is not release-manifest aware"),
             ("SEOHC_BASE_URL", "SEO healthcheck base URL is hard-coded"),
-            ("SEOHC_KEEP_CONFIG", "SEO healthcheck does not load index keep-config"),
+            ("SEOHC_KEEP_CONFIG", "SEO healthcheck has no explicit keep-config override"),
             ("unexpected_noindex_open", "SEO healthcheck cannot detect open pages accidentally noindexed"),
             ("unexpected_index_closed", "SEO healthcheck cannot detect closed pages accidentally indexed"),
             ("open_missing_sitemap", "SEO healthcheck cannot detect open pages missing from sitemap"),
             ("closed_in_sitemap", "SEO healthcheck cannot detect closed pages leaking into sitemap"),
+            ("bad_sitemap_urls", "SEO healthcheck cannot detect malformed/noncanonical sitemap URLs"),
+            ("sitemap_orphan_urls", "SEO healthcheck cannot detect sitemap URLs without pages"),
             ("canonical_url_mismatch", "SEO healthcheck does not validate canonical URL"),
             ("canonical_duplicate_pages", "SEO healthcheck cannot detect duplicate canonical URLs"),
             ("invalid_jsonld_pages", "SEO healthcheck cannot detect invalid JSON-LD"),
@@ -141,15 +169,21 @@ def check_seo_tooling(failures: list[str]) -> None:
         ),
         failures,
     )
-    require("from app.services.notify_service import send_telegram" not in health.splitlines()[:20],
-            "SEO healthcheck requires private backend at import time", failures)
+    require(
+        "from app.services.notify_service import send_telegram" not in health.splitlines()[:20],
+        "SEO healthcheck requires private backend at import time",
+        failures,
+    )
     require_tokens(
         predeploy,
         (
+            ('KEEP_FILENAME = ".xgu-index-keep.json"', "predeploy is not bound to the release manifest"),
+            ("keep-config must be the release manifest", "predeploy accepts an unrelated keep-config"),
             ("REQUIRED_POLICY_METADATA", "predeploy does not require policy provenance"),
             ("policy_sha256", "predeploy does not require policy hash"),
             ("whitelist missing", "predeploy does not require whitelist"),
-            ("audit.get(\"policy_loaded\")", "predeploy does not verify policy was loaded"),
+            ('audit.get("policy_loaded")', "predeploy does not verify policy was loaded"),
+            ("policy-check every HTML page", "predeploy does not require complete policy coverage"),
             ("evaluate(audit)", "predeploy does not run strict SEO thresholds"),
         ),
         failures,
@@ -166,12 +200,21 @@ def check_index_policy(failures: list[str]) -> None:
             ("BUNDLED_BASELINE", "shrink_index does not use versioned baseline data"),
             ("--use-builtin-policy", "emergency baseline is not explicitly gated"),
             ("example_only", "shrink_index does not reject example-only policies"),
-            ("policy_sha256", "keep-config does not record policy hash"),
+            ("RELEASE_KEEP_FILENAME", "shrink_index does not write release-bound policy"),
+            ("write_release_keep_config", "shrink_index does not create the release manifest"),
+            ("policy_sha256", "release manifest does not record policy hash"),
+            ("mutation_target_error", "shrink_index is not release-target guarded"),
+            ("atomic_replace_text", "shrink_index does not use atomic file replacement"),
         ),
         failures,
     )
     require("BUILTIN_OPEN_CITIES" not in shrink, "city policy lists leaked back into Python", failures)
     require("BUILTIN_OPEN_SERVICES" not in shrink, "service policy lists leaked back into Python", failures)
+    require(
+        "/opt/p3-app/data/index_keep_config.json" not in shrink,
+        "shrink_index writes/depends on the old global keep-config path",
+        failures,
+    )
 
     try:
         example = json.loads(example_text) if example_text else {}
@@ -193,19 +236,58 @@ def check_write_safety(failures: list[str]) -> None:
         if text:
             require("--apply" in text, f"{rel_path}: production writes are not gated by --apply", failures)
 
+    for rel_path in RELEASE_FIRST_MUTATORS:
+        text = read_text(rel_path, failures)
+        if not text:
+            continue
+        require("mutation_target_error" in text, f"{rel_path}: release target guard missing", failures)
+        require(
+            "--unsafe-allow-active-current" in text,
+            f"{rel_path}: active-current writes are not an explicit emergency override",
+            failures,
+        )
+        require(
+            ".write_text(" not in text,
+            f"{rel_path}: direct text write bypasses the shared atomic helper",
+            failures,
+        )
+
+    rebuild = read_text("seo_rebuild_broken.py", failures)
+    open_hubs = read_text("server-opt/rerender_open_hubs.py", failures)
+    all_hubs = read_text("server-opt/rerender_hubs_home.py", failures)
+    for label, text in (("targeted rebuild", rebuild), ("open-hub rerender", open_hubs), ("hub/home rerender", all_hubs)):
+        require(".xgu-index-keep.json" in text, f"{label}: candidate release manifest is not required", failures)
+        require("XGU_KEEP_CONFIG" in text, f"{label}: renderer is not bound to candidate policy", failures)
+        require("XGU_WHITELIST" in text, f"{label}: renderer is not bound to reviewed whitelist", failures)
+
 
 def check_release_ops(failures: list[str]) -> None:
+    safety = read_text("release_safety.py", failures)
     deploy = read_text("server-opt/deploy_release.py", failures)
     prune = read_text("server-opt/prune_releases.py", failures)
     installer = read_text("server-opt/install_generator_facade.py", failures)
     disk = read_text("server-opt/disk-autoclean.sh", failures)
 
     require_tokens(
+        safety,
+        (
+            ("def mutation_target_error(", "shared release mutation guard missing"),
+            ("resolved.parent != releases", "release guard accepts non-direct candidates"),
+            ("resolved == active", "release guard does not protect active current"),
+            ("def atomic_replace_text(", "shared atomic text helper missing"),
+            ("os.replace(temp, path)", "shared atomic text helper no longer uses os.replace"),
+        ),
+        failures,
+    )
+    require_tokens(
         deploy,
         (
             ("os.replace(temp_link, current)", "release switch is no longer atomic"),
             ("release_resolved.parent != root_resolved", "deploy can target an arbitrary directory"),
+            ('KEEP_FILENAME = ".xgu-index-keep.json"', "deploy does not require release-bound policy"),
             ("referenced sitemap shard missing", "deploy does not validate sitemap shards"),
+            ("run_predeploy(", "deploy does not execute the strict predeploy gate"),
+            ("--unsafe-skip-predeploy", "predeploy bypass is not explicitly marked emergency-only"),
             ("is not a symlink", "deploy no longer refuses a real current directory"),
             ("rollback target", "deploy no longer reports rollback target"),
         ),
@@ -227,7 +309,7 @@ def check_release_ops(failures: list[str]) -> None:
         (
             ("REQUIRED_FILES", "generator install set is missing"),
             ("city_morphology.py", "generator install set is incomplete"),
-            ("compile(source, str(path), \"exec\")", "generator installer does not syntax-check sources"),
+            ('compile(source, str(path), "exec")', "generator installer does not syntax-check sources"),
             ("Stage every new file before mutating any live target", "generator installer no longer stages full set first"),
             ("for target in reversed(replaced)", "generator installer lost rollback loop"),
             (".rollback.", "generator installer rollback is not staged"),
@@ -239,6 +321,20 @@ def check_release_ops(failures: list[str]) -> None:
     require("--vacuum-time=3d" not in disk, "disk cleanup reverted to 3-day journal history", failures)
     require("--vacuum-size=15M" not in disk, "disk cleanup reverted to 15M journal cap", failures)
     require("auth.log" not in disk, "disk cleanup directly targets authentication logs", failures)
+
+
+def check_purge_safety(failures: list[str]) -> None:
+    purge = read_text("server-opt/purge_closed_pages.py", failures)
+    require_tokens(
+        purge,
+        (
+            ("if not index_file.is_file():", "purge can delete a directory without index.html"),
+            ("name=\"robots\" content=\"noindex", "purge does not require explicit noindex proof"),
+            ("mutation_target_error", "purge is not release-target guarded"),
+            ("active_release", "purge does not re-check active release during deletion"),
+        ),
+        failures,
+    )
 
 
 def check_ci_and_tests(failures: list[str]) -> None:
@@ -257,11 +353,9 @@ def check_ci_and_tests(failures: list[str]) -> None:
         ),
         failures,
     )
-    require('importlib.util.find_spec("ruff")' not in validator,
-            "validator incorrectly assumes Ruff is importable", failures)
+    require('importlib.util.find_spec("ruff")' not in validator, "validator incorrectly assumes Ruff is importable", failures)
     require("python scripts/validate_repo.py" in ci, "GitHub CI does not use shared validator", failures)
-    require("python -m pip install --disable-pip-version-check ruff" in ci,
-            "CI no longer installs Ruff", failures)
+    require("python -m pip install --disable-pip-version-check ruff" in ci, "CI no longer installs Ruff", failures)
 
 
 def check_nginx(failures: list[str]) -> None:
@@ -279,7 +373,14 @@ def check_nginx(failures: list[str]) -> None:
 
 
 def check_repository_shape(failures: list[str]) -> None:
-    for rel_path in ("README.md", ".env.example", "requirements.txt", ".github/workflows/ci.yml"):
+    for rel_path in (
+        "README.md",
+        ".env.example",
+        "requirements.txt",
+        ".github/workflows/ci.yml",
+        "release_safety.py",
+        "server-opt/predeploy_check.py",
+    ):
         read_text(rel_path, failures)
 
 
@@ -291,6 +392,7 @@ def main() -> int:
     check_index_policy(failures)
     check_write_safety(failures)
     check_release_ops(failures)
+    check_purge_safety(failures)
     check_ci_and_tests(failures)
     check_nginx(failures)
     check_repository_shape(failures)
@@ -302,17 +404,18 @@ def main() -> int:
         return 1
 
     print("Repository healthcheck: OK")
-    print("  templates synchronized")
-    print("  generator fail-closed/sanitization guards present")
+    print("  templates synchronized and canonical")
+    print("  generator policy follows active release and fails closed")
+    print("  legacy global keep-config requires an explicit migration flag")
     print("  shared city morphology is enforced")
     print("  SEO healthcheck covers policy, sitemap, canonical, JSON-LD and internal links")
-    print("  strict predeploy requires policy provenance + whitelist")
-    print("  reviewed index policy is external/versioned and auditable")
-    print("  deploy is release-root constrained and validates sitemap shards")
+    print("  strict predeploy is release-manifest bound and policy-checks every page")
+    print("  release-first mutators reject active current and use atomic text replacement")
+    print("  purge requires index.html + noindex and re-checks active release")
+    print("  deploy validates manifest/sitemaps/predeploy before atomic switch")
     print("  release pruning re-checks current immediately before deletion")
     print("  generator install is syntax-checked, staged and rollback-safe")
     print("  GitHub CI and local checks share one validation entrypoint")
-    print("  production maintenance scripts require --apply")
     print("  nginx canonicalization, headers and lead rate limiting are guarded")
     return 0
 
