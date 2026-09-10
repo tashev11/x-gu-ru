@@ -27,10 +27,11 @@ def _direct_release_dirs(root: Path) -> list[Path]:
 def _current_release(current: Path, releases_root: Path) -> Path | None:
     if not current.is_symlink():
         return None
+    root = releases_root.resolve()
     target = current.resolve()
-    try:
-        target.relative_to(releases_root.resolve())
-    except ValueError:
+    if target.parent != root:
+        return None
+    if not target.is_dir() or target.is_symlink():
         return None
     return target
 
@@ -63,6 +64,16 @@ def _safe_delete(path: Path, releases_root: Path) -> None:
     shutil.rmtree(resolved)
 
 
+def _delete_if_still_inactive(path: Path, releases_root: Path, current: Path) -> None:
+    """Re-check current immediately before deletion to reduce deploy/prune races."""
+    active = _current_release(current, releases_root)
+    if active is None:
+        raise RuntimeError("active release cannot be proven immediately before delete")
+    if path.resolve() == active:
+        raise RuntimeError(f"refusing to delete release that is active now: {active}")
+    _safe_delete(path, releases_root)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--releases-root", type=Path, default=Path("/var/www/x-gu.ru/releases"))
@@ -83,7 +94,7 @@ def main() -> int:
 
     active = _current_release(args.current, args.releases_root)
     print(f"releases_root: {args.releases_root.resolve()}")
-    print(f"active: {active or '(current is not a release symlink)'}")
+    print(f"active: {active or '(current is not a direct release symlink)'}")
     print(f"keep newest: {args.keep}")
     print(f"protected: {len(keep_paths)}; delete candidates: {len(delete_paths)}")
     for path in delete_paths:
@@ -93,24 +104,20 @@ def main() -> int:
         print("[DRY-RUN] Nothing deleted. Re-run with --apply after reviewing the plan.")
         return 0
 
-    if not args.current.is_symlink():
+    if active is None:
         print(
-            f"Refusing apply: {args.current} is not a symlink; active release cannot be proven.",
+            f"Refusing apply: {args.current} does not point to a direct release inside releases_root.",
             file=sys.stderr,
         )
         return 3
 
-    active = _current_release(args.current, args.releases_root)
-    if active is None:
-        print("Refusing apply: current symlink does not point inside releases_root.", file=sys.stderr)
-        return 4
-
     deleted = 0
     for path in delete_paths:
-        if path == active:
-            print(f"BUG GUARD: active release appeared in delete plan: {path}", file=sys.stderr)
-            return 5
-        _safe_delete(path, args.releases_root)
+        try:
+            _delete_if_still_inactive(path, args.releases_root, args.current)
+        except RuntimeError as exc:
+            print(f"Refusing deletion of {path}: {exc}", file=sys.stderr)
+            return 4
         deleted += 1
 
     print(f"[APPLIED] deleted_releases={deleted}")
