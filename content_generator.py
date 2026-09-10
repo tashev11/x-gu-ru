@@ -138,10 +138,12 @@ def _release_keep_config_path() -> Path:
     if release_manifest.is_file():
         return release_manifest
 
-    # Compatibility fallback for the pre-release-manifest deployment layout.
-    legacy = _data_file("index_keep_config.json")
-    if legacy.is_file():
-        return legacy
+    # The old global keep-config is migration-only. It must never silently
+    # replace a missing release manifest after release-bound policy is enabled.
+    if _env_true("XGU_ALLOW_LEGACY_KEEP_CONFIG"):
+        legacy = _data_file("index_keep_config.json")
+        if legacy.is_file():
+            return legacy
 
     return release_manifest
 
@@ -180,7 +182,8 @@ def _load_keep_config() -> dict | None:
     ``current`` is a symlink, switching a release also switches its index policy
     atomically. ``XGU_KEEP_CONFIG`` can explicitly point candidate rendering at
     a not-yet-active release manifest. The old ``data/index_keep_config.json``
-    remains a temporary compatibility fallback only.
+    is accepted only when ``XGU_ALLOW_LEGACY_KEEP_CONFIG=1`` is set for a
+    controlled migration.
     """
     path = _release_keep_config_path()
     if not path.is_file():
