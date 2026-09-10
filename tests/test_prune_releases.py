@@ -41,6 +41,41 @@ class PruneReleaseTests(unittest.TestCase):
             self.assertNotIn(active.resolve(), delete)
             self.assertEqual(delete, [oldest.resolve()])
 
+    def test_pre_bootstrap_backup_is_protected_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            root.mkdir()
+            active = self._release(root, "r3", 10)
+            normal_old = self._release(root, "r1", 30)
+            bootstrap_backup = self._release(root, "pre-bootstrap-20260910-180000", 9999)
+            current = Path(temp) / "current"
+            current.symlink_to(active)
+
+            protected, delete = prune_releases.build_plan(root, current, keep=1)
+
+            self.assertIn(bootstrap_backup.resolve(), protected)
+            self.assertNotIn(bootstrap_backup.resolve(), delete)
+            self.assertIn(normal_old.resolve(), delete)
+
+    def test_bootstrap_backup_can_only_enter_plan_with_explicit_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            root.mkdir()
+            active = self._release(root, "r3", 10)
+            bootstrap_backup = self._release(root, "pre-bootstrap-20260910-180000", 9999)
+            current = Path(temp) / "current"
+            current.symlink_to(active)
+
+            protected, delete = prune_releases.build_plan(
+                root,
+                current,
+                keep=1,
+                protect_bootstrap_backups=False,
+            )
+
+            self.assertNotIn(bootstrap_backup.resolve(), protected)
+            self.assertIn(bootstrap_backup.resolve(), delete)
+
     def test_keep_must_be_positive(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
