@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and atomically switch x-gu.ru to a self-contained release."""
+"""Validate and atomically switch x-gu.ru to a finalized release."""
 from __future__ import annotations
 
 import argparse
@@ -19,6 +19,7 @@ for path in (str(SERVER_OPT), str(REPO_ROOT)):
         sys.path.insert(0, path)
 
 from predeploy_check import run_predeploy  # noqa: E402
+from release_integrity import RELEASE_METADATA_FILENAME  # noqa: E402
 from release_safety import DEFAULT_RELEASE_LOCK, release_operation_lock  # noqa: E402
 
 
@@ -36,6 +37,7 @@ def _required_paths(release: Path) -> list[Path]:
         release / "sitemap.xml",
         release / KEEP_FILENAME,
         release / WHITELIST_FILENAME,
+        release / RELEASE_METADATA_FILENAME,
     ]
 
 
@@ -54,7 +56,6 @@ def _local_name(tag: str) -> str:
 
 
 def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
-    errors: list[str] = []
     try:
         root = ET.fromstring(sitemap.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, ET.ParseError) as exc:
@@ -62,7 +63,7 @@ def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
 
     root_name = _local_name(root.tag)
     if root_name == "urlset":
-        return errors
+        return []
     if root_name != "sitemapindex":
         return ["sitemap.xml root must be sitemapindex or urlset"]
 
@@ -74,18 +75,16 @@ def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
     if not locs:
         return ["sitemap index contains no shard locations"]
 
+    errors: list[str] = []
     for loc in locs:
         parsed = urlparse(loc)
-        if parsed.scheme != "https" or not parsed.netloc:
-            errors.append(f"sitemap shard loc must be canonical HTTPS: {loc}")
-            continue
-        if parsed.hostname != CANONICAL_HOST:
-            errors.append(f"sitemap shard loc uses non-canonical host: {loc}")
+        if parsed.scheme != "https" or parsed.hostname != CANONICAL_HOST or parsed.query or parsed.fragment:
+            errors.append(f"sitemap shard loc is not canonical HTTPS: {loc}")
             continue
         rel = parsed.path.lstrip("/")
         shard = release / rel
         try:
-            shard.relative_to(release)
+            shard.resolve().relative_to(release.resolve())
         except ValueError:
             errors.append(f"sitemap shard escapes release root: {loc}")
             continue
@@ -126,10 +125,10 @@ def _validate_keep_manifest(path: Path) -> list[str]:
 
 
 def validate_release(release: Path, *, releases_root: Path | None = None) -> list[str]:
-    errors: list[str] = []
     if not release.is_dir():
         return [f"release directory not found: {release}"]
 
+    errors: list[str] = []
     if releases_root is not None:
         errors.extend(_validate_release_location(release, releases_root))
 
@@ -141,20 +140,19 @@ def validate_release(release: Path, *, releases_root: Path | None = None) -> lis
 
     index = release / "index.html"
     if index.is_file():
-        text = index.read_text(encoding="utf-8", errors="ignore")
-        if "<html" not in text.lower():
+        text = index.read_text(encoding="utf-8", errors="ignore").lower()
+        if "<html" not in text:
             errors.append("index.html does not look like HTML")
-        if "<title" not in text.lower():
+        if "<title" not in text:
             errors.append("index.html has no title")
 
     sitemap = release / "sitemap.xml"
-    if sitemap.is_file() and sitemap.stat().st_size > 0:
+    if sitemap.is_file() and sitemap.stat().st_size:
         errors.extend(_validate_sitemap_index(release, sitemap))
 
-    keep_manifest = release / KEEP_FILENAME
-    if keep_manifest.is_file():
-        errors.extend(_validate_keep_manifest(keep_manifest))
-
+    keep = release / KEEP_FILENAME
+    if keep.is_file():
+        errors.extend(_validate_keep_manifest(keep))
     return list(dict.fromkeys(errors))
 
 
@@ -167,14 +165,12 @@ def _current_target(current: Path) -> Path | None:
     return raw.resolve() if raw.is_absolute() else (current.parent / raw).resolve()
 
 
-def switch_release(current: Path, release: Path, *, releases_root: Path | None = None) -> Path | None:
-    if releases_root is not None:
-        location_errors = _validate_release_location(release, releases_root)
-        if location_errors:
-            raise RuntimeError(location_errors[0])
+def switch_release(current: Path, release: Path, *, releases_root: Path) -> Path | None:
+    location_errors = _validate_release_location(release, releases_root)
+    if location_errors:
+        raise RuntimeError(location_errors[0])
 
     previous = _current_target(current)
-    current.parent.mkdir(parents=True, exist_ok=True)
     temp_link = current.parent / f".{current.name}.next.{os.getpid()}.{time.time_ns()}"
     try:
         os.symlink(str(release.resolve()), temp_link)
@@ -185,28 +181,25 @@ def switch_release(current: Path, release: Path, *, releases_root: Path | None =
     return previous
 
 
-def _validate_candidate(release: Path, releases_root: Path, base_url: str, unsafe_skip: bool) -> tuple[int, list[str]]:
+def _validate_candidate(release: Path, releases_root: Path, base_url: str, unsafe_skip: bool) -> tuple[int, list[str], dict | None]:
     errors = validate_release(release, releases_root=releases_root)
     if errors:
-        return 2, errors
-
+        return 2, errors, None
     if unsafe_skip:
-        return 0, []
+        return 0, [], None
 
-    ok, gate_errors, _audit = run_predeploy(
+    ok, gate_errors, audit = run_predeploy(
         release,
         keep_config=release / KEEP_FILENAME,
         whitelist=release / WHITELIST_FILENAME,
         base_url=base_url,
     )
-    if not ok:
-        return 3, gate_errors
-    return 0, []
+    return (0, [], audit) if ok else (3, gate_errors, audit)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("release_dir", type=Path, help="fully built release directory")
+    parser.add_argument("release_dir", type=Path, help="fully finalized release directory")
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
     parser.add_argument("--lock-file", type=Path, default=DEFAULT_RELEASE_LOCK)
@@ -214,7 +207,7 @@ def main() -> int:
     parser.add_argument(
         "--unsafe-skip-predeploy",
         action="store_true",
-        help="emergency-only override: skip strict SEO/policy predeploy gate",
+        help="emergency-only override: skip strict SEO/integrity predeploy gate",
     )
     parser.add_argument("--apply", action="store_true", help="atomically switch current to release_dir")
     args = parser.parse_args()
@@ -223,27 +216,36 @@ def main() -> int:
     releases_root = args.releases_root.resolve()
     current = args.current
 
-    if not args.apply:
-        code, errors = _validate_candidate(release, releases_root, args.base_url, args.unsafe_skip_predeploy)
+    def validate_and_report() -> tuple[int, Path | None, dict | None]:
+        code, errors, audit = _validate_candidate(release, releases_root, args.base_url, args.unsafe_skip_predeploy)
         if errors:
             label = "Release validation" if code == 2 else "Strict pre-deploy gate"
             print(f"{label}: FAIL", file=sys.stderr)
             for error in errors:
                 print(f"  - {error}", file=sys.stderr)
-            return code
+            return code, None, audit
         if args.unsafe_skip_predeploy:
             print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
         else:
             print("Strict pre-deploy gate: OK")
+        previous = _current_target(current)
+        if audit and audit.get("release_metadata"):
+            metadata = audit["release_metadata"]
+            print(f"tooling revision: {metadata['tooling_revision']}")
+            print(f"release sha256:   {metadata['content_sha256']}")
+        return 0, previous, audit
+
+    if not args.apply:
         try:
-            previous = _current_target(current)
+            code, previous, _audit = validate_and_report()
         except RuntimeError as exc:
             print(str(exc), file=sys.stderr)
             return 4
+        if code:
+            return code
         if previous is not None and previous.resolve() == release:
             print(f"current already points to release: {release}")
             return 0
-        print("Release validation: OK")
         print(f"release:       {release}")
         print(f"releases root: {releases_root}")
         print(f"current:       {current}")
@@ -253,32 +255,13 @@ def main() -> int:
 
     try:
         with release_operation_lock(args.lock_file.resolve()):
-            # Re-run every gate while the production release lock is held. This
-            # prevents a second deploy/bootstrap/prune from changing state
-            # between validation and the final current switch.
-            code, errors = _validate_candidate(release, releases_root, args.base_url, args.unsafe_skip_predeploy)
-            if errors:
-                label = "Release validation" if code == 2 else "Strict pre-deploy gate"
-                print(f"{label}: FAIL", file=sys.stderr)
-                for error in errors:
-                    print(f"  - {error}", file=sys.stderr)
+            # Re-run every gate while the production release lock is held.
+            code, previous, _audit = validate_and_report()
+            if code:
                 return code
-            if args.unsafe_skip_predeploy:
-                print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
-            else:
-                print("Strict pre-deploy gate: OK")
-
-            previous = _current_target(current)
             if previous is not None and previous.resolve() == release:
                 print(f"current already points to release: {release}")
                 return 0
-
-            print("Release validation: OK")
-            print(f"release:       {release}")
-            print(f"releases root: {releases_root}")
-            print(f"current:       {current}")
-            print(f"previous:      {previous or '(none)'}")
-
             previous = switch_release(current, release, releases_root=releases_root)
     except (RuntimeError, FileNotFoundError) as exc:
         print(f"Release switch refused: {exc}", file=sys.stderr)
