@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Re-render homepage and discovered city hubs in a release candidate.
+"""Re-render homepage and discovered city hubs in a self-contained release.
 
-The candidate must contain ``.xgu-index-keep.json``. The generator is explicitly
-pointed at that manifest so the render cannot inherit robots/index policy from
-the currently active release.
+The homepage is restricted to the candidate's open-city policy, and open city
+hubs expose only policy-open services plus per-city whitelist extras. Rendering
+is bound to the candidate's own policy and whitelist snapshots.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 
 APP_ROOT = Path("/opt/p3-app")
@@ -32,9 +34,59 @@ from release_safety import (  # noqa: E402
 
 PUBLIC_ROOT = DEFAULT_CURRENT
 RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
-DEFAULT_WHITELIST = APP_ROOT / "data/whitelist.txt"
+RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"
 CITIES_CSV = APP_ROOT / "data/ru_cities_with_population.csv"
 KEYWORDS_CSV = APP_ROOT / "data/keywords_all.csv"
+
+
+def _valid_sha256(value: object) -> bool:
+    digest = str(value or "").strip().lower()
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def load_contract(keep_config: Path, whitelist: Path) -> tuple[list[str], list[str]]:
+    if not keep_config.is_file():
+        raise SystemExit(f"Release policy manifest missing: {keep_config}")
+    if not whitelist.is_file():
+        raise SystemExit(f"Release whitelist snapshot missing: {whitelist}")
+    try:
+        payload = json.loads(keep_config.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Invalid release policy manifest: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("release policy manifest root must be a JSON object")
+
+    open_cities = list(payload.get("open_cities") or [])
+    open_services = list(payload.get("open_services") or [])
+    if not open_cities or not open_services:
+        raise SystemExit("release policy manifest has empty open_cities/open_services")
+    if not str(payload.get("policy_source") or "").strip() or not _valid_sha256(payload.get("policy_sha256")):
+        raise SystemExit("release policy manifest has invalid policy provenance")
+    if not str(payload.get("whitelist_source") or "").strip() or not _valid_sha256(payload.get("whitelist_sha256")):
+        raise SystemExit("release policy manifest has invalid whitelist provenance")
+
+    expected = str(payload.get("whitelist_sha256")).strip().lower()
+    actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
+    if actual != expected:
+        raise SystemExit(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
+    return open_cities, open_services
+
+
+def whitelist_extras(path: Path) -> dict[str, set[str]]:
+    extras: dict[str, set[str]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="strict").splitlines(), start=1):
+        value = line.strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or parsed.netloc != "x-gu.ru" or parsed.query or parsed.fragment:
+            raise SystemExit(f"Invalid release whitelist URL on line {line_number}: {value}")
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) == 2:
+            extras.setdefault(parts[0], set()).add(parts[1])
+        elif len(parts) > 2:
+            raise SystemExit(f"Unsupported release whitelist path depth on line {line_number}: {value}")
+    return extras
 
 
 def load_city_map() -> dict[str, SimpleNamespace]:
@@ -52,24 +104,25 @@ def load_city_map() -> dict[str, SimpleNamespace]:
     return mapping
 
 
-def load_services() -> list[SimpleNamespace]:
-    services: list[SimpleNamespace] = []
+def load_services_map() -> dict[str, SimpleNamespace]:
+    mapping: dict[str, SimpleNamespace] = {}
     with KEYWORDS_CSV.open(encoding="utf-8", errors="strict") as file:
         for row in csv.DictReader(file):
             name = (row.get("name") or "").strip()
             slug = (row.get("slug") or "").strip()
             if name and slug:
-                services.append(
-                    SimpleNamespace(
-                        name=name,
-                        slug=slug,
-                        niche=(row.get("niche") or "SEO").strip(),
-                    )
+                mapping[slug] = SimpleNamespace(
+                    name=name,
+                    slug=slug,
+                    niche=(row.get("niche") or "SEO").strip(),
                 )
-    return services
+    return mapping
 
 
-def discover_hubs(root: Path, city_map: dict[str, SimpleNamespace]) -> tuple[list[tuple[Path, SimpleNamespace]], list[str]]:
+def discover_hubs(
+    root: Path,
+    city_map: dict[str, SimpleNamespace],
+) -> tuple[list[tuple[Path, SimpleNamespace]], list[str]]:
     hubs: list[tuple[Path, SimpleNamespace]] = []
     skipped: list[str] = []
     for name in sorted(os.listdir(root)):
@@ -95,7 +148,6 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=PUBLIC_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
-    parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
     parser.add_argument(
         "--unsafe-allow-active-current",
         action="store_true",
@@ -108,26 +160,52 @@ def main() -> int:
     if not CITIES_CSV.is_file() or not KEYWORDS_CSV.is_file():
         raise SystemExit("Required city/keyword CSV data is missing")
 
-    keep_config = args.root.resolve() / RELEASE_KEEP_FILENAME
-    if not keep_config.is_file():
-        raise SystemExit(
-            f"Release policy manifest missing: {keep_config}. Run shrink_index.py on the candidate first."
-        )
-    if not args.whitelist.is_file():
-        raise SystemExit(f"Whitelist missing: {args.whitelist}")
+    release_root = args.root.resolve()
+    keep_config = release_root / RELEASE_KEEP_FILENAME
+    whitelist = release_root / RELEASE_WHITELIST_FILENAME
+    open_cities, open_services = load_contract(keep_config, whitelist)
+    extras = whitelist_extras(whitelist)
+
     os.environ["XGU_KEEP_CONFIG"] = str(keep_config)
-    os.environ["XGU_WHITELIST"] = str(args.whitelist.resolve())
+    os.environ["XGU_WHITELIST"] = str(whitelist)
 
     city_map = load_city_map()
-    services = load_services()
+    service_map = load_services_map()
     hubs, skipped = discover_hubs(args.root, city_map)
-    print(f"plan: homepage=1 hubs={len(hubs)} skipped={len(skipped)} services={len(services)}")
+    open_set = set(open_cities)
+    homepage_catalog = _homepage_cities()
+    homepage_by_slug = {item["slug"]: item for item in homepage_catalog}
+    cities_for_home = [homepage_by_slug[slug] for slug in open_cities if slug in homepage_by_slug]
+
+    whitelist_service_slugs = sorted({service for values in extras.values() for service in values})
+    missing_open_cities = [slug for slug in open_cities if slug not in city_map]
+    missing_home_cities = [slug for slug in open_cities if slug not in homepage_by_slug]
+    missing_open_services = [slug for slug in open_services if slug not in service_map]
+    missing_whitelist_services = [slug for slug in whitelist_service_slugs if slug not in service_map]
+    discovered_hub_slugs = {city.slug for _path, city in hubs}
+    missing_open_hubs = [slug for slug in open_cities if slug not in discovered_hub_slugs]
 
     integrity_errors: list[str] = []
-    if not services:
+    if not service_map:
         integrity_errors.append("service CSV produced zero renderable services")
     if skipped:
         integrity_errors.append("city dirs missing from CSV: " + ", ".join(skipped[:20]))
+    if missing_open_cities:
+        integrity_errors.append("open cities missing from city CSV: " + ", ".join(missing_open_cities))
+    if missing_home_cities:
+        integrity_errors.append("open cities missing from homepage catalog: " + ", ".join(missing_home_cities))
+    if missing_open_services:
+        integrity_errors.append("open services missing from service CSV: " + ", ".join(missing_open_services))
+    if missing_whitelist_services:
+        integrity_errors.append("whitelist services missing from service CSV: " + ", ".join(missing_whitelist_services))
+    if missing_open_hubs:
+        integrity_errors.append("open city hubs missing from candidate: " + ", ".join(missing_open_hubs))
+
+    print(
+        f"plan: homepage_cities={len(cities_for_home)} hubs={len(hubs)} "
+        f"open_cities={len(open_cities)} open_services={len(open_services)} "
+        f"integrity_errors={len(integrity_errors)}"
+    )
     for error in integrity_errors:
         print(f"  ERROR: {error}", file=sys.stderr)
 
@@ -148,17 +226,26 @@ def main() -> int:
         print(f"Refusing apply before render/write: {target_error}", file=sys.stderr)
         return 3
 
+    all_services = list(service_map.values())
     try:
         env = _template_env()
         home_tpl = env.get_template("homepage_master.html.j2")
         home_html = home_tpl.render(
             base_domain=settings.base_domain,
-            cities_json=json.dumps(_homepage_cities(), ensure_ascii=False),
+            cities_json=json.dumps(cities_for_home, ensure_ascii=False),
         )
         atomic_replace_text(args.root / "index.html", home_html)
 
         rendered = 0
         for hub_file, city in hubs:
+            if city.slug in open_set:
+                allowed_slugs = list(dict.fromkeys(open_services + sorted(extras.get(city.slug, set()))))
+                services = [service_map[slug] for slug in allowed_slugs]
+            else:
+                # Closed hubs remain useful as noindex content, but they cannot
+                # affect homepage navigation and the hardened renderer keeps
+                # their robots state bound to this candidate policy.
+                services = all_services
             html = _render_city_hub_html(city, services)
             atomic_replace_text(hub_file, html)
             rendered += 1
@@ -168,7 +255,7 @@ def main() -> int:
         print(f"Render failed: {exc}. Discard/rebuild this release candidate.", file=sys.stderr)
         return 4
 
-    print(f"[APPLIED] homepage=1 hubs={rendered} skipped=0")
+    print(f"[APPLIED] homepage=1 homepage_cities={len(cities_for_home)} hubs={rendered}")
     return 0
 
 
