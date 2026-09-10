@@ -103,65 +103,47 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
             keep = shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
             self.assertIn("https://x-gu.ru/moskva/seo-audit-saita/", keep)
 
-    def test_isolated_release_candidate_is_valid_apply_target(self) -> None:
+    def test_release_keep_config_is_written_inside_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            release = Path(temp)
+            path = shrink.write_release_keep_config(
+                release,
+                ["moskva"],
+                ["seo-audit-saita"],
+                policy_source="/reviewed/index_policy.json",
+                policy_sha256="a" * 64,
+            )
+            self.assertEqual(path, release / shrink.RELEASE_KEEP_FILENAME)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["open_cities"], ["moskva"])
+            self.assertEqual(payload["policy_sha256"], "a" * 64)
+
+    def test_shared_release_guard_is_used_for_apply_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             releases = root / "releases"
             releases.mkdir()
             candidate = releases / "candidate"
             candidate.mkdir()
-            current = root / "current"
-
-            error = shrink._apply_target_error(
-                candidate,
-                current=current,
-                releases_root=releases,
-                allow_active_current=False,
-            )
-            self.assertIsNone(error)
-
-    def test_active_current_is_rejected_without_emergency_override(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            releases = root / "releases"
-            releases.mkdir()
             active = releases / "active"
             active.mkdir()
             current = root / "current"
             current.symlink_to(active)
 
-            error = shrink._apply_target_error(
-                active,
-                current=current,
-                releases_root=releases,
-                allow_active_current=False,
+            self.assertIsNone(
+                shrink.mutation_target_error(candidate, current=current, releases_root=releases)
             )
-            self.assertIsNotNone(error)
-            override = shrink._apply_target_error(
-                active,
-                current=current,
-                releases_root=releases,
-                allow_active_current=True,
+            self.assertIsNotNone(
+                shrink.mutation_target_error(active, current=current, releases_root=releases)
             )
-            self.assertIsNone(override)
-
-    def test_non_release_directory_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            releases = root / "releases"
-            releases.mkdir()
-            outside = root / "outside"
-            outside.mkdir()
-            current = root / "current"
-
-            error = shrink._apply_target_error(
-                outside,
-                current=current,
-                releases_root=releases,
-                allow_active_current=False,
+            self.assertIsNone(
+                shrink.mutation_target_error(
+                    active,
+                    current=current,
+                    releases_root=releases,
+                    allow_active_current=True,
+                )
             )
-            self.assertIsNotNone(error)
-            self.assertIn("direct child", error)
 
 
 if __name__ == "__main__":
