@@ -11,6 +11,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
+from index_policy import normalize_policy_payload, page_is_open as policy_page_is_open
+
 
 RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
 RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"
@@ -236,10 +238,7 @@ def _load_index_policy(keep_config: Path, whitelist: Path, base_url: str) -> dic
     payload = json.loads(keep_config.read_text(encoding="utf-8", errors="strict"))
     if not isinstance(payload, dict):
         raise ValueError("index keep-config root must be a JSON object")
-    open_cities = set(payload.get("open_cities") or [])
-    open_services = set(payload.get("open_services") or [])
-    if not open_cities or not open_services:
-        raise ValueError("index keep-config has empty open_cities/open_services")
+    policy = normalize_policy_payload(payload)
 
     if keep_config.name == RELEASE_KEEP_FILENAME:
         if whitelist.name != RELEASE_WHITELIST_FILENAME or whitelist.parent.resolve() != keep_config.parent.resolve():
@@ -270,8 +269,10 @@ def _load_index_policy(keep_config: Path, whitelist: Path, base_url: str) -> dic
         whitelist_urls.add(_normalize_url(value))
 
     return {
-        "open_cities": open_cities,
-        "open_services": open_services,
+        **policy,
+        "open_cities": set(policy["open_cities"]),
+        "open_services": set(policy["open_services"]),
+        "open_pairs": set(policy["open_pairs"]),
         "whitelist_urls": whitelist_urls,
     }
 
@@ -286,9 +287,9 @@ def _expected_indexable(page_url: str, base_url: str, policy: dict | None) -> bo
     if not parts or parts == ["privacy"]:
         return True
     if len(parts) == 1:
-        return parts[0] in policy["open_cities"]
+        return policy_page_is_open(policy, parts[0], None)
     if len(parts) == 2:
-        return parts[0] in policy["open_cities"] and parts[1] in policy["open_services"]
+        return policy_page_is_open(policy, parts[0], parts[1])
     return False
 
 
@@ -444,6 +445,8 @@ def run_audit(
         "stats": stats,
         "duplicates": duplicates,
         "policy_loaded": policy is not None,
+        "policy_version": policy.get("policy_version") if policy else None,
+        "policy_mode": policy.get("policy_mode") if policy else None,
         "policy_error": policy_error,
         "keep_config": str(keep_config),
         "whitelist": str(whitelist),
@@ -539,7 +542,8 @@ def main() -> int:
         f"SEO Healthcheck [{status}]\n"
         f"Root: {root}\n"
         f"Base: {audit['base_url']}\n"
-        f"Policy: {audit['keep_config']} ({'loaded' if audit['policy_loaded'] else 'not loaded'})\n"
+        f"Policy: {audit['keep_config']} ({'loaded' if audit['policy_loaded'] else 'not loaded'}) "
+        f"version={audit.get('policy_version')} mode={audit.get('policy_mode')}\n"
         f"Whitelist: {audit['whitelist']}\n"
         f"Pages: {stats['pages_total']}; sitemap page URLs: {audit['sitemap_urls']}\n"
         f"missing_title={stats['missing_title']}, missing_description={stats['missing_description']}, "
