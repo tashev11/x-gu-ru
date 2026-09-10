@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+import unittest
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "server-opt" / "build_pair_policy.py"
+SPEC = importlib.util.spec_from_file_location("xgu_build_pair_policy", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"Cannot load pair-policy builder from {MODULE_PATH}")
+mod = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = mod
+SPEC.loader.exec_module(mod)
+
+
+class BuildPairPolicyTests(unittest.TestCase):
+    def test_builds_exact_pairs_without_cross_product(self) -> None:
+        evidence = {
+            "generated_at": "2026-09-10",
+            "urls": [
+                {
+                    "url": "https://x-gu.ru/moskva/seo-audit-saita/",
+                    "yandex_in_search": True,
+                    "gsc_impressions": 10,
+                    "gsc_clicks": 1,
+                },
+                {
+                    "url": "https://x-gu.ru/tver/prodvizhenie-saita/",
+                    "yandex_in_search": False,
+                    "gsc_impressions": 8,
+                    "gsc_clicks": 0,
+                },
+            ],
+        }
+        policy, review = mod.build_candidate(evidence, min_impressions=5, min_clicks=1)
+        self.assertTrue(policy["example_only"])
+        self.assertEqual(policy["policy_version"], 2)
+        self.assertEqual(policy["open_cities"], ["moskva", "tver"])
+        self.assertEqual(
+            policy["open_pairs"],
+            ["moskva/seo-audit-saita", "tver/prodvizhenie-saita"],
+        )
+        self.assertNotIn("moskva/prodvizhenie-saita", policy["open_pairs"])
+        self.assertEqual(review["counts"]["candidate_pairs"], 2)
+
+    def test_weak_google_only_pair_is_not_selected(self) -> None:
+        policy, review = mod.build_candidate(
+            {
+                "urls": [
+                    {
+                        "url": "https://x-gu.ru/moskva/weak-service/",
+                        "gsc_impressions": 1,
+                        "gsc_clicks": 0,
+                    }
+                ]
+            },
+            min_impressions=5,
+            min_clicks=1,
+        )
+        self.assertEqual(policy["open_pairs"], [])
+        self.assertEqual(policy["open_cities"], [])
+        self.assertEqual(review["counts"]["rejected_below_threshold"], 1)
+
+    def test_manual_or_yandex_signal_selects_pair(self) -> None:
+        policy, _review = mod.build_candidate(
+            {
+                "urls": [
+                    {
+                        "url": "https://x-gu.ru/kazan/service-a/",
+                        "manual_protected": True,
+                    },
+                    {
+                        "url": "https://x-gu.ru/perm/service-b/",
+                        "yandex_in_search": True,
+                    },
+                ]
+            },
+            min_impressions=999,
+            min_clicks=999,
+        )
+        self.assertEqual(policy["open_pairs"], ["kazan/service-a", "perm/service-b"])
+
+    def test_strong_city_hub_is_kept_without_forcing_service_matrix(self) -> None:
+        policy, _review = mod.build_candidate(
+            {
+                "urls": [
+                    {
+                        "url": "https://x-gu.ru/moskva/",
+                        "gsc_impressions": 100,
+                        "gsc_clicks": 5,
+                    }
+                ]
+            },
+            min_impressions=5,
+            min_clicks=1,
+        )
+        self.assertEqual(policy["open_cities"], ["moskva"])
+        self.assertEqual(policy["open_pairs"], [])
+
+    def test_foreign_or_deep_urls_do_not_become_pairs(self) -> None:
+        policy, review = mod.build_candidate(
+            {
+                "urls": [
+                    {"url": "https://example.com/a/b/", "yandex_in_search": True},
+                    {"url": "https://x-gu.ru/a/b/c/", "yandex_in_search": True},
+                ]
+            }
+        )
+        self.assertEqual(policy["open_pairs"], [])
+        self.assertGreaterEqual(review["counts"]["rejected_non_pair_url"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
