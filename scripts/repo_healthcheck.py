@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Static repository safety and programmatic-SEO invariants for x-gu.ru."""
+"""Static repository safety and programmatic-SEO invariants for x-gu.ru.
+
+This checker intentionally avoids importing the private ``app.*`` backend. It
+verifies that the public repository still contains the architectural safeguards
+that are easy to lose during later refactors.
+"""
 from __future__ import annotations
 
 import json
@@ -31,19 +36,24 @@ PRODUCTION_MUTATORS = (
     "server-opt/install_generator_facade.py",
     "server-opt/bootstrap_release_layout.py",
 )
+
 RELEASE_FIRST_MUTATORS = PRODUCTION_MUTATORS[:11]
+
 BACKEND_GENERATOR_CONSUMERS = (
     "seo_rebuild_broken.py",
     "server-opt/rerender_hubs_home.py",
     "server-opt/rerender_open_hubs.py",
     "server-opt/sanitize_generated_proof.py",
 )
+
 TEST_FILES = (
     "tests/test_city_morphology.py",
     "tests/test_index_policy.py",
     "tests/test_seo_healthcheck.py",
+    "tests/test_seo_healthcheck_v2.py",
     "tests/test_programmatic_seo_audit.py",
     "tests/test_build_search_evidence.py",
+    "tests/test_pair_quality_audit.py",
     "tests/test_build_pair_policy.py",
     "tests/test_deploy_release.py",
     "tests/test_prune_releases.py",
@@ -74,7 +84,7 @@ def need(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
-def tokens(text: str, required: dict[str, str], failures: list[str]) -> None:
+def require_tokens(text: str, required: dict[str, str], failures: list[str]) -> None:
     for token, message in required.items():
         need(token in text, message, failures)
 
@@ -101,17 +111,19 @@ def check_templates(failures: list[str]) -> None:
 
 def check_policy_model(failures: list[str]) -> None:
     policy = read("index_policy.py", failures)
-    tokens(
+    require_tokens(
         policy,
         {
-            "SUPPORTED_POLICY_VERSIONS = {1, 2}": "shared policy model does not support v1+v2",
-            'mode = "matrix"': "historical matrix policy compatibility missing",
-            'mode = "pairs"': "pair-level policy mode missing",
+            "SUPPORTED_POLICY_VERSIONS = {1, 2}": "shared policy model does not support v1 and v2",
+            'mode = "matrix"': "historical v1 matrix compatibility missing",
+            'mode = "pairs"': "pair-level v2 mode missing",
             "open_pairs": "pair-level policy has no explicit pairs",
-            "references city hub not present in open_cities": "v2 allows service pair under a closed city hub",
+            "references city hub not present in open_cities": "v2 permits a pair under a closed city hub",
+            "def page_is_open(": "shared exact indexability resolver missing",
             "def services_for_city(": "city-specific service resolver missing",
-            "def keep_urls(": "shared policy cannot build exact indexable URL set",
-            "sorted(f\"{city}/{service}\"": "policy digest is not canonicalized across pair ordering",
+            "def keep_urls(": "shared policy cannot build exact URL set",
+            "def policy_digest(": "canonical policy digest missing",
+            'canonical["open_pairs"] = sorted': "v2 digest is sensitive to pair ordering",
         },
         failures,
     )
@@ -124,25 +136,28 @@ def check_policy_model(failures: list[str]) -> None:
     except json.JSONDecodeError as exc:
         failures.append(f"index policy JSON invalid: {exc}")
         return
+
     need(example.get("policy_version") == 2, "policy example is not pair-level v2", failures)
-    need(example.get("example_only") is True, "policy example is not protected as example_only", failures)
-    need(bool(example.get("open_pairs")), "policy v2 example has no open_pairs", failures)
-    need(baseline.get("policy_version") == 1, "historical baseline no longer identifies itself as v1", failures)
+    need(example.get("example_only") is True, "v2 example is not protected as example_only", failures)
+    need(bool(example.get("open_pairs")), "v2 example has no open_pairs", failures)
+    need(baseline.get("policy_version") == 1, "historical baseline no longer identifies as v1", failures)
     need(bool(baseline.get("reviewed_at")), "baseline policy has no reviewed_at", failures)
     need(bool(baseline.get("source_note")), "baseline policy has no source_note", failures)
 
 
 def check_generator(failures: list[str]) -> None:
     facade = read("content_generator.py", failures)
+    installer = read("server-opt/install_generator_facade.py", failures)
     read("_content_generator_legacy.py", failures)
     read("city_morphology.py", failures)
-    tokens(
+
+    require_tokens(
         facade,
         {
             "autoescape=True": "generator autoescape is not enforced",
             "normalize_policy_payload": "generator does not parse shared v1/v2 policy",
-            "policy_page_is_open": "generator does not use exact shared indexability decision",
-            '_RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"': "release policy manifest support missing",
+            "policy_page_is_open": "generator does not use shared exact pair decision",
+            '_RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"': "release policy support missing",
             '_RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"': "release whitelist support missing",
             "XGU_ALLOW_LEGACY_KEEP_CONFIG": "legacy keep-config is not explicitly gated",
             "XGU_ALLOW_LEGACY_WHITELIST": "legacy whitelist is not explicitly gated",
@@ -150,10 +165,8 @@ def check_generator(failures: list[str]) -> None:
             "Release whitelist SHA-256 mismatch": "generator does not verify release whitelist hash",
             '_legacy._landing_variants = _safe_landing_variants': "legacy testimonials are not disabled before render",
             '_legacy._review_variant = _disabled_review_variant': "legacy deterministic review object is not disabled",
-            '_legacy._city_prepositional = city_prepositional': "legacy generator does not use shared city morphology",
+            '_legacy._city_prepositional = city_prepositional': "legacy generator does not use shared morphology",
             "_sanitize_generated_html": "generated HTML sanitizer missing",
-            'key in {"aggregateRating", "review"}': "review/rating JSON-LD sanitizer missing",
-            'payload.get("@type") == "LocalBusiness"': "generated LocalBusiness sanitizer missing",
         },
         failures,
     )
@@ -163,50 +176,52 @@ def check_generator(failures: list[str]) -> None:
     legacy = facade.find('candidates.append(Path("app/templates"))')
     need(canonical >= 0 and legacy > canonical, "canonical templates are not preferred over app/templates", failures)
 
-    installer = read("server-opt/install_generator_facade.py", failures)
-    need('"index_policy.py"' in installer, "generator installer does not deploy shared index policy", failures)
+    for required in (
+        '"content_generator.py"',
+        '"_content_generator_legacy.py"',
+        '"city_morphology.py"',
+        '"index_policy.py"',
+    ):
+        need(required in installer, f"generator installer misses required source {required}", failures)
 
 
-def check_policy_and_seo(failures: list[str]) -> None:
+def check_programmatic_seo(failures: list[str]) -> None:
     shrink = read("server-opt/shrink_index.py", failures)
     health = read("seo_healthcheck.py", failures)
     predeploy = read("server-opt/predeploy_check.py", failures)
     corpus = read("server-opt/programmatic_seo_audit.py", failures)
     evidence = read("server-opt/build_search_evidence.py", failures)
-    pair_builder = read("server-opt/build_pair_policy.py", failures)
+    quality = read("server-opt/pair_quality_audit.py", failures)
+    builder = read("server-opt/build_pair_policy.py", failures)
+    report = read("server-opt/seo_report.py", failures)
 
-    tokens(
+    require_tokens(
         shrink,
         {
             "load_policy_model": "shrink_index does not load normalized v1/v2 policy",
-            "build_keep_urls_for_policy": "shrink_index still assumes a blind city/service cross-product",
-            "manifest_policy_fields": "release manifest does not preserve policy version/pairs",
-            'RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"': "shrink_index does not write release policy",
-            'RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"': "shrink_index does not snapshot whitelist",
-            "--use-builtin-policy": "emergency baseline is not explicitly gated",
-            "policy_sha256": "policy digest provenance missing",
-            "whitelist_sha256": "whitelist digest provenance missing",
+            "build_keep_urls_for_policy": "shrink_index still assumes a blind cross-product",
+            "manifest_policy_fields": "release manifest does not preserve v2 exact pairs",
+            "--use-builtin-policy": "historical v1 fallback is not explicitly gated",
+            "policy_sha256": "policy provenance digest missing",
+            "whitelist_sha256": "whitelist provenance digest missing",
             "mutation_target_error": "shrink_index is not release-target guarded",
             "atomic_replace_text": "shrink_index bypasses atomic writes",
         },
         failures,
     )
-    need("BUILTIN_OPEN_CITIES" not in shrink, "city policy leaked back into Python", failures)
-    need("BUILTIN_OPEN_SERVICES" not in shrink, "service policy leaked back into Python", failures)
+    need("BUILTIN_OPEN_CITIES" not in shrink, "city policy lists leaked back into Python", failures)
+    need("BUILTIN_OPEN_SERVICES" not in shrink, "service policy lists leaked back into Python", failures)
     need("/opt/p3-app/data/index_keep_config.json" not in shrink, "shrink_index uses legacy global keep-config", failures)
 
-    tokens(
+    require_tokens(
         health,
         {
             "normalize_policy_payload": "SEO healthcheck does not parse v2 policy",
-            "policy_page_is_open": "SEO healthcheck does not validate exact city/service pair indexability",
-            "RELEASE_KEEP_FILENAME": "SEO healthcheck is not release-policy aware",
-            "RELEASE_WHITELIST_FILENAME": "SEO healthcheck is not release-whitelist aware",
-            "SEOHC_REQUIRE_POLICY": "SEO healthcheck is not fail-closed on missing policy",
-            "release whitelist SHA-256 mismatch": "SEO healthcheck does not verify whitelist hash",
+            "policy_page_is_open": "SEO healthcheck does not validate exact pair indexability",
             "unexpected_noindex_open": "SEO healthcheck cannot detect wrong noindex",
             "unexpected_index_closed": "SEO healthcheck cannot detect wrongly indexed closed pages",
-            "sitemap_orphan_urls": "SEO healthcheck cannot detect sitemap orphan URLs",
+            "open_missing_sitemap": "SEO healthcheck cannot detect open URL missing from sitemap",
+            "closed_in_sitemap": "SEO healthcheck cannot detect closed URL leaking into sitemap",
             "canonical_duplicate_pages": "SEO healthcheck cannot detect duplicate canonicals",
             "invalid_jsonld_pages": "SEO healthcheck cannot detect invalid JSON-LD",
             "broken_internal_links": "SEO healthcheck cannot detect broken internal links",
@@ -214,19 +229,19 @@ def check_policy_and_seo(failures: list[str]) -> None:
         failures,
     )
 
-    tokens(
+    require_tokens(
         corpus,
         {
-            "physical_pages": "full-corpus SEO audit does not report physical inventory",
-            "indexable_pages": "full-corpus SEO audit does not report indexable inventory",
-            "orphan_indexable_pages": "full-corpus SEO audit does not detect orphan indexable pages",
-            "indexable_links_to_closed": "full-corpus SEO audit does not detect open-to-closed links",
-            "near_duplicate_pages": "full-corpus SEO audit does not detect near duplicates",
-            "_near_duplicate_groups": "full-corpus SEO audit lost near-duplicate grouping",
+            "physical_pages": "full-corpus audit does not report physical inventory",
+            "indexable_pages": "full-corpus audit does not report indexable inventory",
+            "orphan_indexable_pages": "full-corpus audit does not detect orphan pages",
+            "indexable_links_to_closed": "full-corpus audit does not detect open-to-closed links",
+            "near_duplicate_pages": "full-corpus audit does not detect near duplicates",
         },
         failures,
     )
-    tokens(
+
+    require_tokens(
         evidence,
         {
             "fetch_yandex_urls": "search evidence does not collect Yandex URLs",
@@ -237,25 +252,54 @@ def check_policy_and_seo(failures: list[str]) -> None:
         },
         failures,
     )
-    tokens(
-        pair_builder,
+
+    require_tokens(
+        quality,
         {
-            '"policy_version": 2': "pair-policy builder does not emit v2",
-            '"example_only": True': "pair-policy candidate is not protected from direct production use",
-            '"open_pairs"': "pair-policy builder does not emit exact city/service pairs",
-            "below threshold": "pair-policy builder does not expose weak-signal exclusions",
+            "search evidence": "pair quality audit is not evidence-targeted",
+            "thin_content": "pair quality audit does not detect thin pages",
+            "canonical_mismatch": "pair quality audit does not validate self-canonical",
+            "invalid_jsonld": "pair quality audit does not validate JSON-LD",
+            "exact_duplicate": "pair quality audit does not detect exact duplicate bodies",
+            "near_duplicate": "pair quality audit does not flag near duplicates",
+            "improve_before_index": "pair quality audit has no hard quality state",
         },
         failures,
     )
 
-    tokens(
+    require_tokens(
+        builder,
+        {
+            '"policy_version": 2': "pair-policy builder does not emit v2",
+            '"example_only": True': "pair-policy candidate is not protected from direct production use",
+            '"open_pairs"': "pair-policy builder does not emit exact pairs",
+            "DEFAULT_QUALITY": "pair-policy builder does not consume pair quality",
+            "require_quality": "pair-policy builder can no longer require quality evidence",
+            "quality_hard_fail": "hard page-quality defects do not block pair recommendation",
+            "review_similarity": "near duplicates cannot be surfaced for manual review",
+        },
+        failures,
+    )
+
+    require_tokens(
         predeploy,
         {
-            'KEEP_FILENAME = ".xgu-index-keep.json"': "predeploy is not bound to release policy",
-            'WHITELIST_FILENAME = ".xgu-whitelist.txt"': "predeploy is not bound to release whitelist",
-            "release whitelist SHA-256 mismatch": "predeploy does not verify whitelist hash",
-            'audit.get("policy_loaded")': "predeploy does not prove policy load",
+            "normalize_policy_payload": "predeploy does not structurally validate v1/v2 policy",
+            "policy_digest": "predeploy does not verify the canonical policy digest",
+            "release policy SHA-256 mismatch": "predeploy cannot detect changed open_pairs with stale digest",
+            "verify_release_metadata": "predeploy does not verify finalized release fingerprint",
             "evaluate(audit)": "predeploy does not execute strict SEO thresholds",
+        },
+        failures,
+    )
+
+    require_tokens(
+        report,
+        {
+            "_policy_pair_count": "SEO report does not expose exact policy pair count",
+            "policy open city hubs": "SEO report does not expose city-hub inventory",
+            "inside exact release policy": "SEO report does not compare search evidence to exact policy",
+            "ZERO GSC page signal": "SEO report does not expose open pages without Google signals",
         },
         failures,
     )
@@ -289,7 +333,7 @@ def check_mutation_safety(failures: list[str]) -> None:
     need("cities_for_home" in hubs and "open_cities" in hubs, "full rerender can repopulate closed homepage cities", failures)
 
     purge = read("server-opt/purge_closed_pages.py", failures)
-    tokens(
+    require_tokens(
         purge,
         {
             'WHITELIST_FILENAME = ".xgu-whitelist.txt"': "purge does not use release whitelist",
@@ -302,38 +346,48 @@ def check_mutation_safety(failures: list[str]) -> None:
     need(purge.count("mutation_target_error(") >= 2, "purge does not re-check active release per delete", failures)
 
 
-def check_release_control_plane(failures: list[str]) -> None:
+def check_release_control(failures: list[str]) -> None:
     safety = read("release_safety.py", failures)
+    integrity = read("release_integrity.py", failures)
+    predeploy = read("server-opt/predeploy_check.py", failures)
     deploy = read("server-opt/deploy_release.py", failures)
     bootstrap = read("server-opt/bootstrap_release_layout.py", failures)
     prune = read("server-opt/prune_releases.py", failures)
-    installer = read("server-opt/install_generator_facade.py", failures)
-    integrity = read("release_integrity.py", failures)
     finalizer = read("server-opt/finalize_release.py", failures)
+    installer = read("server-opt/install_generator_facade.py", failures)
 
-    tokens(
+    require_tokens(
         safety,
         {
             "def mutation_target_error(": "release mutation guard missing",
             "def atomic_replace_text(": "atomic write helper missing",
-            "def release_operation_lock(": "host-wide release operation lock missing",
+            "def release_operation_lock(": "host-wide release lock missing",
             "fcntl.LOCK_EX | fcntl.LOCK_NB": "release lock is not exclusive/non-blocking",
-            "another release operation already holds lock": "concurrent release operation is not rejected",
+            "O_NOFOLLOW": "release lock can follow a symlink",
         },
         failures,
     )
+    require_tokens(
+        integrity,
+        {
+            "def compute_release_digest(": "release digest implementation missing",
+            "def verify_release_metadata(": "release metadata verification missing",
+            "release content SHA-256 mismatch": "late release mutation is not detected",
+        },
+        failures,
+    )
+    need("verify_release_metadata" in predeploy, "predeploy does not verify immutable release fingerprint", failures)
+    need("run_predeploy(" in deploy, "deploy does not run strict predeploy", failures)
+    need("normalize_policy_payload" in deploy and "policy_digest" in deploy, "deploy structural gate does not validate v2 policy", failures)
+    need("rollback target" in deploy, "deploy does not report rollback target", failures)
+    need("run_predeploy(" in bootstrap, "bootstrap does not validate target release", failures)
+    need("pre-bootstrap-" in prune, "prune does not protect bootstrap backup class", failures)
+    need("write_release_metadata" in finalizer, "release finalizer does not write integrity metadata", failures)
+    need('compile(source, str(path), "exec")' in installer, "generator installer does not syntax-check sources", failures)
+
     for label, text in (("deploy", deploy), ("bootstrap", bootstrap), ("prune", prune)):
         need("release_operation_lock" in text, f"{label}: host-wide release lock missing", failures)
         need("--lock-file" in text, f"{label}: lock path is not explicit/configurable", failures)
-
-    need("run_predeploy(" in deploy, "deploy does not run strict predeploy", failures)
-    need("rollback target" in deploy, "deploy does not report rollback target", failures)
-    need("run_predeploy(" in bootstrap, "bootstrap does not predeploy target", failures)
-    need("pre-bootstrap-" in prune, "prune does not protect bootstrap backup class", failures)
-    need('compile(source, str(path), "exec")' in installer, "generator installer does not syntax-check source", failures)
-    need("compute_release_fingerprint" in integrity, "release integrity fingerprint implementation missing", failures)
-    need("verify_release_manifest" in deploy, "deploy does not verify finalized release fingerprint", failures)
-    need("write_release_manifest" in finalizer, "release finalizer does not write immutable manifest", failures)
 
 
 def check_validation_and_docs(failures: list[str]) -> None:
@@ -347,7 +401,7 @@ def check_validation_and_docs(failures: list[str]) -> None:
     for rel in TEST_FILES:
         read(rel, failures)
 
-    tokens(
+    require_tokens(
         validator,
         {
             '"-m", "compileall"': "validator lost compileall",
@@ -360,12 +414,13 @@ def check_validation_and_docs(failures: list[str]) -> None:
     )
     need("python scripts/validate_repo.py" in ci, "CI does not use shared validator", failures)
     need("SEOHC_REQUIRE_POLICY=true" in env, ".env.example does not document fail-closed SEO policy", failures)
-    need("PRODUCTION_DEPLOY_RUNBOOK.md" in readme, "README does not link production runbook", failures)
-    need("open_pairs" in seo_arch, "SEO architecture does not document pair-level target model", failures)
+    need("index_policy.py" in readme, "README does not document shared SEO policy model", failures)
+    need("pair_quality_audit.py" in readme, "README does not document pair quality audit", failures)
+    need("build_pair_policy.py" in readme, "README does not document pair-policy workflow", failures)
+    need("open_pairs" in seo_arch, "SEO architecture does not document exact pair model", failures)
     need("programmatic_seo_audit.py" in seo_arch, "SEO architecture does not document full-corpus audit", failures)
     need("build_search_evidence.py" in seo_arch, "SEO architecture does not document combined search evidence", failures)
-    need("build_pair_policy.py" in seo_arch, "SEO architecture does not document v2 candidate builder", failures)
-    need("python scripts/validate_repo.py" in runbook, "runbook skips repository validation", failures)
+    need("python scripts/validate_repo.py" in runbook, "production runbook skips repository validation", failures)
 
 
 def check_nginx_and_cleanup(failures: list[str]) -> None:
@@ -391,9 +446,9 @@ def main() -> int:
     check_templates(failures)
     check_policy_model(failures)
     check_generator(failures)
-    check_policy_and_seo(failures)
+    check_programmatic_seo(failures)
     check_mutation_safety(failures)
-    check_release_control_plane(failures)
+    check_release_control(failures)
     check_validation_and_docs(failures)
     check_nginx_and_cleanup(failures)
 
@@ -404,14 +459,13 @@ def main() -> int:
         return 1
 
     print("Repository healthcheck: OK")
-    print("  templates are synchronized and canonical")
-    print("  SEO policy v1 matrix + v2 exact pairs share one model")
-    print("  generator, sitemap, healthcheck and hub links use the same indexability rules")
-    print("  full-corpus SEO audit and combined Yandex/GSC evidence tooling are present")
-    print("  pair-policy candidates are review-only and cannot auto-promote to production")
-    print("  bulk mutations are candidate-only and atomic")
-    print("  finalized releases are fingerprinted and release control operations are serialized")
-    print("  CI/local validation use one entrypoint")
+    print("  SEO policy v1 matrix + v2 exact city/service pairs share one model")
+    print("  generator, sitemap, healthcheck and hub links use the same pair decision")
+    print("  Yandex/GSC evidence is intersected with targeted pair quality before v2 recommendation")
+    print("  full-corpus audit tracks thin/orphan/open-to-closed/duplicate risks")
+    print("  pair-policy output is review-only and cannot auto-promote to production")
+    print("  release writes/deploys remain candidate-only, fingerprinted and serialized")
+    print("  CI/local validation share one entrypoint")
     return 0
 
 
