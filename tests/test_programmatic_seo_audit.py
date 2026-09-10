@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ SPEC = importlib.util.spec_from_file_location("xgu_programmatic_seo_audit", MODU
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Cannot load programmatic SEO audit from {MODULE_PATH}")
 audit_mod = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = audit_mod
 SPEC.loader.exec_module(audit_mod)
 
 BASE = "https://x-gu.ru"
