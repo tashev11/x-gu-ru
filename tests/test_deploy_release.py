@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -25,6 +26,10 @@ class DeployReleaseTests(unittest.TestCase):
             '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>',
             encoding="utf-8",
         )
+        whitelist_text = "https://x-gu.ru/moskva/\n"
+        whitelist = release / deploy_release.WHITELIST_FILENAME
+        whitelist.write_text(whitelist_text, encoding="utf-8")
+        whitelist_digest = hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest()
         (release / deploy_release.KEEP_FILENAME).write_text(
             json.dumps(
                 {
@@ -32,6 +37,8 @@ class DeployReleaseTests(unittest.TestCase):
                     "open_services": ["seo-audit-saita"],
                     "policy_source": "/reviewed/index_policy.json",
                     "policy_sha256": "a" * 64,
+                    "whitelist_source": "/reviewed/whitelist.txt",
+                    "whitelist_sha256": whitelist_digest,
                 }
             ),
             encoding="utf-8",
@@ -43,8 +50,9 @@ class DeployReleaseTests(unittest.TestCase):
             release = Path(temp) / "broken"
             release.mkdir()
             errors = deploy_release.validate_release(release)
-            self.assertGreaterEqual(len(errors), 4)
+            self.assertGreaterEqual(len(errors), 5)
             self.assertTrue(any(deploy_release.KEEP_FILENAME in error for error in errors))
+            self.assertTrue(any(deploy_release.WHITELIST_FILENAME in error for error in errors))
 
     def test_invalid_keep_manifest_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -57,12 +65,15 @@ class DeployReleaseTests(unittest.TestCase):
                         "open_services": ["seo-audit-saita"],
                         "policy_source": "reviewed",
                         "policy_sha256": "bad",
+                        "whitelist_source": "reviewed",
+                        "whitelist_sha256": "bad",
                     }
                 ),
                 encoding="utf-8",
             )
             errors = deploy_release.validate_release(release)
             self.assertTrue(any("invalid policy_sha256" in error for error in errors))
+            self.assertTrue(any("invalid whitelist_sha256" in error for error in errors))
 
     def test_atomic_switch_returns_previous_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
