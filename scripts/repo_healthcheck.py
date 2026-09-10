@@ -43,6 +43,7 @@ TEST_FILES = (
     "tests/test_prune_releases.py",
     "tests/test_install_generator_facade.py",
     "tests/test_shrink_index_policy.py",
+    "tests/test_predeploy_check.py",
 )
 
 
@@ -111,13 +112,17 @@ def check_generator(failures: list[str]) -> None:
     fallback_pos = facade.find('candidates.append(Path("app/templates"))')
     require(canonical_pos >= 0, "canonical repository template path missing", failures)
     require(fallback_pos >= 0, "legacy app/templates fallback missing", failures)
-    require(canonical_pos >= 0 and fallback_pos >= 0 and canonical_pos < fallback_pos,
-            "generator prefers legacy app/templates over canonical templates", failures)
+    require(
+        canonical_pos >= 0 and fallback_pos >= 0 and canonical_pos < fallback_pos,
+        "generator prefers legacy app/templates over canonical templates",
+        failures,
+    )
 
 
 def check_seo_tooling(failures: list[str]) -> None:
     repair = read_text("seo_inplace_fix.py", failures)
     health = read_text("seo_healthcheck.py", failures)
+    predeploy = read_text("server-opt/predeploy_check.py", failures)
     require("from city_morphology import city_prepositional" in repair,
             "SEO repair duplicates city morphology", failures)
     require_tokens(
@@ -138,6 +143,17 @@ def check_seo_tooling(failures: list[str]) -> None:
     )
     require("from app.services.notify_service import send_telegram" not in health.splitlines()[:20],
             "SEO healthcheck requires private backend at import time", failures)
+    require_tokens(
+        predeploy,
+        (
+            ("REQUIRED_POLICY_METADATA", "predeploy does not require policy provenance"),
+            ("policy_sha256", "predeploy does not require policy hash"),
+            ("whitelist missing", "predeploy does not require whitelist"),
+            ("audit.get(\"policy_loaded\")", "predeploy does not verify policy was loaded"),
+            ("evaluate(audit)", "predeploy does not run strict SEO thresholds"),
+        ),
+        failures,
+    )
 
 
 def check_index_policy(failures: list[str]) -> None:
@@ -198,7 +214,9 @@ def check_release_ops(failures: list[str]) -> None:
     require_tokens(
         prune,
         (
-            ("if path == active", "release pruning lacks active-release deletion guard"),
+            ("target.parent != root", "release pruning accepts non-direct current targets"),
+            ("_delete_if_still_inactive", "release pruning does not re-check current before delete"),
+            ("active release cannot be proven immediately before delete", "release pruning lacks race fail-closed guard"),
             ("resolved.parent != root", "release pruning can escape releases root"),
             ("current.is_symlink()", "release pruning cannot prove active release"),
         ),
@@ -288,8 +306,10 @@ def main() -> int:
     print("  generator fail-closed/sanitization guards present")
     print("  shared city morphology is enforced")
     print("  SEO healthcheck covers policy, sitemap, canonical, JSON-LD and internal links")
+    print("  strict predeploy requires policy provenance + whitelist")
     print("  reviewed index policy is external/versioned and auditable")
     print("  deploy is release-root constrained and validates sitemap shards")
+    print("  release pruning re-checks current immediately before deletion")
     print("  generator install is syntax-checked, staged and rollback-safe")
     print("  GitHub CI and local checks share one validation entrypoint")
     print("  production maintenance scripts require --apply")
