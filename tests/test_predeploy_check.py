@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -51,6 +52,12 @@ class PredeployCheckTests(unittest.TestCase):
             f"<?xml version='1.0'?><urlset><url><loc>{BASE}/</loc></url><url><loc>{BASE}/moskva/</loc></url></urlset>",
             encoding="utf-8",
         )
+
+        whitelist = release / predeploy.WHITELIST_FILENAME
+        whitelist_text = ""
+        whitelist.write_text(whitelist_text, encoding="utf-8")
+        whitelist_digest = hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest()
+
         keep = release / predeploy.KEEP_FILENAME
         keep.write_text(
             json.dumps(
@@ -59,12 +66,12 @@ class PredeployCheckTests(unittest.TestCase):
                     "open_services": ["seo-audit-saita"],
                     "policy_source": "/opt/p3-app/data/index_policy.json",
                     "policy_sha256": "a" * 64,
+                    "whitelist_source": "/opt/p3-app/data/whitelist.txt",
+                    "whitelist_sha256": whitelist_digest,
                 }
             ),
             encoding="utf-8",
         )
-        whitelist = root / "whitelist.txt"
-        whitelist.write_text("", encoding="utf-8")
         return temp, release, keep, whitelist
 
     def test_valid_release_and_policy_pass(self) -> None:
@@ -80,6 +87,7 @@ class PredeployCheckTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertIsNotNone(audit)
         self.assertTrue(audit["policy_loaded"])
+        self.assertEqual(audit["stats"]["policy_checked_pages"], audit["stats"]["pages_total"])
 
     def test_keep_config_outside_release_is_rejected(self) -> None:
         temp, release, _keep, whitelist = self._fixture()
@@ -92,6 +100,8 @@ class PredeployCheckTests(unittest.TestCase):
                     "open_services": ["seo-audit-saita"],
                     "policy_source": "reviewed",
                     "policy_sha256": "a" * 64,
+                    "whitelist_source": "reviewed",
+                    "whitelist_sha256": hashlib.sha256(whitelist.read_bytes()).hexdigest(),
                 }
             ),
             encoding="utf-8",
@@ -105,6 +115,19 @@ class PredeployCheckTests(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIsNone(audit)
         self.assertTrue(any("release manifest" in error for error in errors))
+
+    def test_whitelist_outside_release_is_rejected(self) -> None:
+        temp, release, keep, _whitelist = self._fixture()
+        self.addCleanup(temp.cleanup)
+        outside = Path(temp.name) / "outside-whitelist.txt"
+        outside.write_text("", encoding="utf-8")
+        errors = predeploy.validate_policy_files(
+            keep,
+            outside,
+            release_root=release,
+            base_url=BASE,
+        )
+        self.assertTrue(any("release snapshot" in error for error in errors))
 
     def test_missing_policy_provenance_fails_before_audit(self) -> None:
         temp, release, keep, whitelist = self._fixture()
@@ -138,10 +161,26 @@ class PredeployCheckTests(unittest.TestCase):
         )
         self.assertTrue(any("valid SHA-256" in error for error in errors))
 
+    def test_whitelist_hash_mismatch_fails(self) -> None:
+        temp, release, keep, whitelist = self._fixture()
+        self.addCleanup(temp.cleanup)
+        whitelist.write_text("https://x-gu.ru/moskva/\n", encoding="utf-8")
+        errors = predeploy.validate_policy_files(
+            keep,
+            whitelist,
+            release_root=release,
+            base_url=BASE,
+        )
+        self.assertTrue(any("SHA-256 mismatch" in error for error in errors))
+
     def test_external_whitelist_url_fails(self) -> None:
         temp, release, keep, whitelist = self._fixture()
         self.addCleanup(temp.cleanup)
-        whitelist.write_text("https://example.com/moskva/\n", encoding="utf-8")
+        text = "https://example.com/moskva/\n"
+        whitelist.write_text(text, encoding="utf-8")
+        payload = json.loads(keep.read_text(encoding="utf-8"))
+        payload["whitelist_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        keep.write_text(json.dumps(payload), encoding="utf-8")
         errors = predeploy.validate_policy_files(
             keep,
             whitelist,
