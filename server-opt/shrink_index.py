@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Manage the indexable core of x-gu.ru.
+"""Manage the indexable core of an x-gu.ru release candidate.
 
-Safe by default: the command only builds and prints a plan. Real changes to
-robots meta, sitemap and keep-config require ``--apply``. Apply is intended for
-an isolated release candidate; mutating the active ``current`` target requires
-an explicit emergency override.
+Dry-run by default. Apply writes only to an isolated release candidate unless an
+explicit emergency override allows active current. The resulting keep-config is
+stored inside the release as ``.xgu-index-keep.json`` so switching ``current``
+also switches the policy atomically.
 """
 from __future__ import annotations
 
@@ -13,20 +13,28 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 
-DEFAULT_WEB_ROOT = Path("/var/www/x-gu.ru/current")
-DEFAULT_CURRENT = Path("/var/www/x-gu.ru/current")
-DEFAULT_RELEASES_ROOT = Path("/var/www/x-gu.ru/releases")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from release_safety import (  # noqa: E402
+    DEFAULT_CURRENT,
+    DEFAULT_RELEASES_ROOT,
+    atomic_replace_text,
+    mutation_target_error,
+)
+
+
+DEFAULT_WEB_ROOT = DEFAULT_CURRENT
 DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
-DEFAULT_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
 DEFAULT_POLICY = Path(os.getenv("XGU_INDEX_POLICY", "/opt/p3-app/data/index_policy.json"))
 BUNDLED_BASELINE = Path(__file__).resolve().with_name("index_policy.baseline.json")
+RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
 BASE = "https://x-gu.ru"
 CANONICAL_HOST = "x-gu.ru"
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -97,9 +105,8 @@ def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[s
     if path is None or not path.is_file():
         raise SystemExit(
             "Reviewed index policy is required. Provide --policy /path/to/index_policy.json "
-            "(recommended) or explicitly use --use-builtin-policy for emergency recovery only."
+            "or explicitly use --use-builtin-policy for emergency recovery only."
         )
-
     cities, services = _load_policy_file(path)
     return cities, services, str(path.resolve()), _policy_digest(cities, services)
 
@@ -119,39 +126,9 @@ def _canonical_whitelist_url(value: str) -> str:
         raise SystemExit(f"Whitelist URL contains unsafe path segment: {value}")
 
     path = parsed.path or "/"
-    if not path.startswith("/"):
-        path = "/" + path
     if path != "/" and not path.endswith("/"):
         path += "/"
     return BASE + path
-
-
-def _apply_target_error(
-    web_root: Path,
-    *,
-    current: Path,
-    releases_root: Path,
-    allow_active_current: bool,
-) -> str | None:
-    root = web_root.resolve()
-    releases = releases_root.resolve()
-    active: Path | None = None
-    if current.exists() or current.is_symlink():
-        try:
-            active = current.resolve(strict=True)
-        except OSError:
-            active = None
-
-    if active is not None and root == active:
-        if allow_active_current:
-            return None
-        return (
-            "refusing to mutate the active current release; build/copy an isolated release candidate "
-            "and pass it via --web-root. Use --unsafe-allow-active-current only for emergency recovery."
-        )
-    if root.parent != releases:
-        return f"apply target must be a direct child of releases root: target={root} releases_root={releases}"
-    return None
 
 
 def url_for(html: Path, web_root: Path) -> str:
@@ -166,7 +143,6 @@ def build_keep_urls(whitelist: Path, open_cities: list[str], open_services: list
         raise SystemExit(
             f"Whitelist not found: {whitelist}. Refusing index-core changes because protected URLs are unknown."
         )
-
     _validate_slugs(open_cities, "city")
     _validate_slugs(open_services, "service")
 
@@ -224,11 +200,10 @@ def reopen_text(text: str) -> str | None:
 def make_plan(web_root: Path, keep: set[str]) -> tuple[list[tuple[Path, str]], int, int, int]:
     operations: list[tuple[Path, str]] = []
     scanned = kept = errors = 0
-
     for html in web_root.rglob("index.html"):
         scanned += 1
         try:
-            text = html.read_text(encoding="utf-8")
+            text = html.read_text(encoding="utf-8", errors="strict")
             url = url_for(html, web_root)
             if url in keep:
                 kept += 1
@@ -239,14 +214,6 @@ def make_plan(web_root: Path, keep: set[str]) -> tuple[list[tuple[Path, str]], i
         except Exception as exc:  # noqa: BLE001
             errors += 1
             print(f"  ERROR {html}: {exc}", file=sys.stderr)
-
-        if scanned % 5000 == 0:
-            print(
-                f"  ... scanned={scanned} kept={kept} "
-                f"planned={len(operations)} errors={errors}",
-                flush=True,
-            )
-
     return operations, scanned, kept, errors
 
 
@@ -254,48 +221,43 @@ def apply_page_plan(operations: list[tuple[Path, str]]) -> tuple[int, int]:
     changed = errors = 0
     for path, action in operations:
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path.read_text(encoding="utf-8", errors="strict")
             new_text = reopen_text(text) if action == "reopen" else noindex_text(text)
             if new_text is None:
                 continue
-            path.write_text(new_text, encoding="utf-8")
+            atomic_replace_text(path, new_text)
             changed += 1
         except Exception as exc:  # noqa: BLE001
             errors += 1
             print(f"  APPLY ERROR {path}: {exc}", file=sys.stderr)
+            break
     return changed, errors
 
 
-def write_keep_config(
-    path: Path,
+def write_release_keep_config(
+    web_root: Path,
     open_cities: list[str],
     open_services: list[str],
     *,
     policy_source: str,
     policy_sha256: str,
-) -> None:
+) -> Path:
+    path = web_root / RELEASE_KEEP_FILENAME
     payload = {
         "open_cities": open_cities,
         "open_services": open_services,
         "policy_source": policy_source,
         "policy_sha256": policy_sha256,
-        "generated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    atomic_replace_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return path
 
 
 def write_sitemap(web_root: Path, keep: set[str]) -> None:
-    ts = time.strftime("%Y%m%d-%H%M%S")
-    index_path = web_root / "sitemap.xml"
     shard_dir = web_root / "sitemaps"
     shard_dir.mkdir(parents=True, exist_ok=True)
     shard = shard_dir / "sitemap-1.xml"
-
-    if index_path.exists():
-        shutil.copy2(index_path, web_root / f"sitemap.xml.bak.{ts}")
-    if shard.exists():
-        shutil.copy2(shard, shard_dir / f"sitemap-1.xml.bak.{ts}")
 
     urls = sorted(keep)
     lines = [
@@ -304,7 +266,7 @@ def write_sitemap(web_root: Path, keep: set[str]) -> None:
     ]
     lines.extend(f"  <url><loc>{url}</loc></url>" for url in urls)
     lines.append("</urlset>")
-    shard.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    atomic_replace_text(shard, "\n".join(lines) + "\n")
 
     index = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -312,13 +274,13 @@ def write_sitemap(web_root: Path, keep: set[str]) -> None:
         f"  <sitemap><loc>{BASE}/sitemaps/sitemap-1.xml</loc></sitemap>",
         "</sitemapindex>",
     ]
-    index_path.write_text("\n".join(index) + "\n", encoding="utf-8")
-    print(f"sitemap rebuilt: {len(urls)} urls (backup suffix .bak.{ts})")
+    atomic_replace_text(web_root / "sitemap.xml", "\n".join(index) + "\n")
+    print(f"sitemap rebuilt: {len(urls)} urls")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="apply robots/sitemap/config changes")
+    parser.add_argument("--apply", action="store_true", help="apply robots/sitemap/release-policy changes")
     parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY, help="reviewed JSON open_cities/open_services policy")
     parser.add_argument(
         "--use-builtin-policy",
@@ -331,10 +293,9 @@ def main() -> int:
     parser.add_argument(
         "--unsafe-allow-active-current",
         action="store_true",
-        help="emergency override allowing --apply directly against the active current target",
+        help="emergency override allowing --apply directly against active current",
     )
     parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
-    parser.add_argument("--keep-config", type=Path, default=DEFAULT_KEEP_CONFIG)
     args = parser.parse_args()
 
     if not args.web_root.is_dir():
@@ -359,16 +320,15 @@ def main() -> int:
         f"plan: scanned={scanned} kept_open={kept} close={close_count} "
         f"reopen={reopen_count} errors={errors}"
     )
-
     if errors:
-        print("Plan contains read/errors; refusing to apply.", file=sys.stderr)
+        print("Plan contains read errors; refusing apply.", file=sys.stderr)
         return 2
 
     if not args.apply:
         print("[DRY-RUN] No files changed. Re-run with --apply against an isolated release candidate.")
         return 0
 
-    target_error = _apply_target_error(
+    target_error = mutation_target_error(
         args.web_root,
         current=args.current,
         releases_root=args.releases_root,
@@ -381,22 +341,30 @@ def main() -> int:
     changed, apply_errors = apply_page_plan(operations)
     if apply_errors:
         print(
-            f"Page application had {apply_errors} errors; sitemap/keep-config were NOT rewritten. "
-            "Discard this release candidate and rebuild it before deployment.",
+            "Page application failed; sitemap/policy manifest were not rewritten. "
+            "Discard and rebuild this release candidate.",
             file=sys.stderr,
         )
         return 4
 
-    write_keep_config(
-        args.keep_config,
-        open_cities,
-        open_services,
-        policy_source=policy_source,
-        policy_sha256=policy_sha256,
-    )
-    write_sitemap(args.web_root, keep)
+    try:
+        keep_path = write_release_keep_config(
+            args.web_root,
+            open_cities,
+            open_services,
+            policy_source=policy_source,
+            policy_sha256=policy_sha256,
+        )
+        write_sitemap(args.web_root, keep)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"Release metadata/sitemap write failed: {exc}. Discard and rebuild this candidate.",
+            file=sys.stderr,
+        )
+        return 5
+
     print(
-        f"[APPLIED] page_changes={changed} keep_config={args.keep_config} "
+        f"[APPLIED] page_changes={changed} release_keep_config={keep_path} "
         f"sitemap_urls={len(keep)}"
     )
     return 0
