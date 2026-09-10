@@ -12,6 +12,7 @@ from typing import Iterator, TextIO
 DEFAULT_CURRENT = Path("/var/www/x-gu.ru/current")
 DEFAULT_RELEASES_ROOT = Path("/var/www/x-gu.ru/releases")
 DEFAULT_RELEASE_LOCK = Path("/var/www/x-gu.ru/.release-operation.lock")
+FINALIZED_MARKER = ".xgu-release.json"
 
 
 def active_release(current: Path) -> Path | None:
@@ -33,8 +34,9 @@ def mutation_target_error(
 ) -> str | None:
     """Validate a bulk-write target.
 
-    Normal writes must target a real direct child of ``releases_root`` and must
-    not be the active ``current`` target. Symlink candidates are never accepted.
+    Normal writes must target a real, unfinalized direct child of
+    ``releases_root``. A finalized candidate is immutable: remove/rebuild it
+    deliberately rather than mutating files after its fingerprint was signed.
     """
     if target.is_symlink():
         return f"mutation target must not be a symlink: {target}"
@@ -46,15 +48,21 @@ def mutation_target_error(
     active = active_release(current)
 
     if active is not None and resolved == active:
-        if allow_active_current:
-            return None
-        return (
-            "refusing to mutate the active current release; use an isolated release candidate. "
-            "An active-current override is for emergency recovery only."
-        )
+        if not allow_active_current:
+            return (
+                "refusing to mutate the active current release; use an isolated release candidate. "
+                "An active-current override is for emergency recovery only."
+            )
 
     if resolved.parent != releases:
         return f"mutation target must be a direct child of releases root: target={resolved} releases_root={releases}"
+
+    finalized = resolved / FINALIZED_MARKER
+    if finalized.exists() or finalized.is_symlink():
+        return (
+            f"mutation target is finalized and immutable: {finalized}. "
+            "Create/rebuild a new candidate instead of modifying finalized content."
+        )
     return None
 
 
@@ -71,8 +79,7 @@ def release_operation_lock(lock_path: Path = DEFAULT_RELEASE_LOCK) -> Iterator[T
         raise RuntimeError(f"release lock parent must not be a symlink: {lock_path.parent}")
 
     flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    flags |= nofollow
+    flags |= getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(lock_path, flags, 0o600)
     except OSError as exc:
