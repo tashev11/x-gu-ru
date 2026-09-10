@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -12,21 +13,21 @@ from urllib.parse import urljoin, urlparse
 
 
 RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
+RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"
 LEGACY_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
+LEGACY_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
 
 
 def _as_int(name: str, default: int) -> int:
     raw = os.getenv(name)
-    if raw is None or raw == "":
-        return default
-    return int(raw)
+    return default if raw in {None, ""} else int(raw)
 
 
 def _as_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
-    if raw is None or raw == "":
+    if raw in {None, ""}:
         return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _normalize_base_url(value: str) -> str:
@@ -139,7 +140,7 @@ def _page_url(root: Path, html_file: Path, base_url: str) -> str:
 
 
 def _read_sitemap_urls(root: Path, base_url: str) -> tuple[set[str], int]:
-    """Return page URLs only; sitemap-index shard locs are metadata, not pages."""
+    """Return page URLs only; sitemap-index shard locs are metadata."""
     urls: set[str] = set()
     invalid = 0
     base = urlparse(base_url)
@@ -183,12 +184,10 @@ def _internal_page_target(href: str, current_url: str, base_url: str) -> str | N
     if not href or lowered.startswith(("#", "mailto:", "tel:", "javascript:", "data:")):
         return None
 
-    resolved = urljoin(current_url, href)
-    parsed = urlparse(resolved)
+    parsed = urlparse(urljoin(current_url, href))
     base = urlparse(base_url)
     if parsed.scheme not in {"http", "https"} or parsed.netloc != base.netloc:
         return None
-
     path = parsed.path or "/"
     if path.startswith(("/api/", "/assets/", "/.well-known/", "/console")):
         return None
@@ -199,23 +198,76 @@ def _internal_page_target(href: str, current_url: str, base_url: str) -> str | N
     return _normalize_url(f"{base_url}{path}")
 
 
+def _valid_sha256(value: object) -> bool:
+    digest = str(value or "").strip().lower()
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
+def _default_keep_config(root: Path) -> Path:
+    explicit = os.getenv("SEOHC_KEEP_CONFIG", "").strip()
+    if explicit:
+        return Path(explicit).resolve()
+    release_manifest = root.resolve() / RELEASE_KEEP_FILENAME
+    if release_manifest.is_file():
+        return release_manifest
+    if _as_bool("SEOHC_ALLOW_LEGACY_KEEP_CONFIG", False) and LEGACY_KEEP_CONFIG.is_file():
+        return LEGACY_KEEP_CONFIG
+    return release_manifest
+
+
+def _default_whitelist(root: Path, keep_config: Path) -> Path:
+    explicit = os.getenv("SEOHC_WHITELIST", "").strip()
+    if explicit:
+        return Path(explicit).resolve()
+    if keep_config.name == RELEASE_KEEP_FILENAME:
+        return keep_config.parent / RELEASE_WHITELIST_FILENAME
+    release_whitelist = root.resolve() / RELEASE_WHITELIST_FILENAME
+    if release_whitelist.is_file():
+        return release_whitelist
+    if _as_bool("SEOHC_ALLOW_LEGACY_WHITELIST", False) and LEGACY_WHITELIST.is_file():
+        return LEGACY_WHITELIST
+    return release_whitelist
+
+
 def _load_index_policy(keep_config: Path, whitelist: Path, base_url: str) -> dict | None:
-    if not keep_config.is_file():
+    if not keep_config.is_file() or not whitelist.is_file():
         return None
 
     payload = json.loads(keep_config.read_text(encoding="utf-8", errors="strict"))
+    if not isinstance(payload, dict):
+        raise ValueError("index keep-config root must be a JSON object")
     open_cities = set(payload.get("open_cities") or [])
     open_services = set(payload.get("open_services") or [])
-    whitelist_urls: set[str] = set()
+    if not open_cities or not open_services:
+        raise ValueError("index keep-config has empty open_cities/open_services")
 
-    if whitelist.is_file():
-        for line in whitelist.read_text(encoding="utf-8", errors="strict").splitlines():
-            value = line.strip()
-            if not value:
-                continue
-            if value.startswith("/"):
-                value = base_url + value
-            whitelist_urls.add(_normalize_url(value))
+    if keep_config.name == RELEASE_KEEP_FILENAME:
+        if whitelist.name != RELEASE_WHITELIST_FILENAME or whitelist.parent.resolve() != keep_config.parent.resolve():
+            raise ValueError("release policy must use the sibling release whitelist snapshot")
+        if not str(payload.get("policy_source") or "").strip() or not _valid_sha256(payload.get("policy_sha256")):
+            raise ValueError("release policy provenance is invalid")
+        if not str(payload.get("whitelist_source") or "").strip() or not _valid_sha256(payload.get("whitelist_sha256")):
+            raise ValueError("release whitelist provenance is invalid")
+        expected = str(payload.get("whitelist_sha256")).strip().lower()
+        actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
+        if actual != expected:
+            raise ValueError(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
+
+    whitelist_urls: set[str] = set()
+    base = urlparse(base_url)
+    for line_number, line in enumerate(whitelist.read_text(encoding="utf-8", errors="strict").splitlines(), start=1):
+        value = line.strip()
+        if not value:
+            continue
+        if value.startswith("/"):
+            value = base_url + value
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or parsed.netloc != base.netloc or parsed.query or parsed.fragment:
+            raise ValueError(f"invalid whitelist URL on line {line_number}: {value}")
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) > 2:
+            raise ValueError(f"unsupported whitelist path depth on line {line_number}: {value}")
+        whitelist_urls.add(_normalize_url(value))
 
     return {
         "open_cities": open_cities,
@@ -230,7 +282,6 @@ def _expected_indexable(page_url: str, base_url: str, policy: dict | None) -> bo
     page_url = _normalize_url(page_url)
     if page_url in policy["whitelist_urls"]:
         return True
-
     parts = [part for part in urlparse(page_url).path.split("/") if part]
     if not parts or parts == ["privacy"]:
         return True
@@ -241,20 +292,6 @@ def _expected_indexable(page_url: str, base_url: str, policy: dict | None) -> bo
     return False
 
 
-def _default_keep_config(root: Path) -> Path:
-    explicit = os.getenv("SEOHC_KEEP_CONFIG", "").strip()
-    if explicit:
-        return Path(explicit).resolve()
-
-    release_manifest = root.resolve() / RELEASE_KEEP_FILENAME
-    if release_manifest.is_file():
-        return release_manifest
-
-    if _as_bool("SEOHC_ALLOW_LEGACY_KEEP_CONFIG", False) and LEGACY_KEEP_CONFIG.is_file():
-        return LEGACY_KEEP_CONFIG
-    return release_manifest
-
-
 def run_audit(
     root: Path,
     *,
@@ -262,14 +299,20 @@ def run_audit(
     keep_config: Path | None = None,
     whitelist: Path | None = None,
 ) -> dict:
+    root = root.resolve()
     base_url = _normalize_base_url(base_url or os.getenv("SEOHC_BASE_URL", "https://x-gu.ru"))
-    keep_config = keep_config or _default_keep_config(root)
-    whitelist = whitelist or Path(os.getenv("SEOHC_WHITELIST", "/opt/p3-app/data/whitelist.txt"))
+    keep_config = (keep_config or _default_keep_config(root)).resolve()
+    whitelist = (whitelist or _default_whitelist(root, keep_config)).resolve()
 
     files = list(root.rglob("index.html"))
     page_urls = {_normalize_url(_page_url(root, html_file, base_url)) for html_file in files}
     sitemap_urls, bad_sitemap_urls = _read_sitemap_urls(root, base_url)
-    policy = _load_index_policy(keep_config, whitelist, base_url)
+    policy_error = ""
+    try:
+        policy = _load_index_policy(keep_config, whitelist, base_url)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        policy = None
+        policy_error = str(exc)
 
     stats = {
         "pages_total": len(files),
@@ -401,7 +444,9 @@ def run_audit(
         "stats": stats,
         "duplicates": duplicates,
         "policy_loaded": policy is not None,
+        "policy_error": policy_error,
         "keep_config": str(keep_config),
+        "whitelist": str(whitelist),
         "base_url": base_url,
         "sitemap_urls": len(sitemap_urls),
     }
@@ -437,7 +482,8 @@ def evaluate(audit: dict) -> tuple[bool, list[str]]:
 
     breaches: list[str] = []
     if _as_bool("SEOHC_REQUIRE_POLICY", True) and not audit.get("policy_loaded"):
-        breaches.append(f"policy_not_loaded: {audit.get('keep_config')}")
+        detail = audit.get("policy_error") or audit.get("keep_config")
+        breaches.append(f"policy_not_loaded: {detail}")
 
     for key in (
         "missing_title",
@@ -494,6 +540,7 @@ def main() -> int:
         f"Root: {root}\n"
         f"Base: {audit['base_url']}\n"
         f"Policy: {audit['keep_config']} ({'loaded' if audit['policy_loaded'] else 'not loaded'})\n"
+        f"Whitelist: {audit['whitelist']}\n"
         f"Pages: {stats['pages_total']}; sitemap page URLs: {audit['sitemap_urls']}\n"
         f"missing_title={stats['missing_title']}, missing_description={stats['missing_description']}, "
         f"missing_canonical={stats['missing_canonical']}, missing_h1={stats['missing_h1']}\n"
