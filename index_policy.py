@@ -121,14 +121,14 @@ def normalize_policy_payload(
 
 
 def policy_digest(policy: dict[str, Any]) -> str:
-    canonical = {
+    canonical: dict[str, Any] = {
         "policy_version": int(policy["policy_version"]),
-        "open_cities": list(policy["open_cities"]),
+        "open_cities": sorted(policy["open_cities"]),
     }
     if int(policy["policy_version"]) == 1:
-        canonical["open_services"] = list(policy["open_services"])
+        canonical["open_services"] = sorted(policy["open_services"])
     else:
-        canonical["open_pairs"] = [f"{city}/{service}" for city, service in policy["open_pairs"]]
+        canonical["open_pairs"] = sorted(f"{city}/{service}" for city, service in policy["open_pairs"])
     raw = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
@@ -176,6 +176,5 @@ def manifest_policy_fields(policy: dict[str, Any]) -> dict[str, Any]:
         result["open_services"] = list(policy["open_services"])
     else:
         result["open_pairs"] = [f"{city}/{service}" for city, service in policy["open_pairs"]]
-        # Derived field is useful for inventory/reporting but is not authoritative.
         result["open_services"] = list(policy["open_services"])
     return result
