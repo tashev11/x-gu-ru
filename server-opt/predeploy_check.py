@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Strict offline gate for a built x-gu.ru release before symlink switch."""
+"""Strict offline gate for a finalized x-gu.ru release before symlink switch."""
 from __future__ import annotations
 
 import argparse
@@ -14,6 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from release_integrity import RELEASE_METADATA_FILENAME, verify_release_metadata  # noqa: E402
 from seo_healthcheck import evaluate, run_audit  # noqa: E402
 
 
@@ -145,6 +146,14 @@ def run_predeploy(
     if errors:
         return False, errors, None
 
+    # Finalization is the boundary after which a release is immutable. Verify
+    # the full-file fingerprint before doing the semantic SEO audit so a late
+    # mutation can never be deployed merely because its HTML still looks valid.
+    metadata, integrity_errors = verify_release_metadata(release_root)
+    if integrity_errors:
+        return False, integrity_errors, None
+    assert metadata is not None
+
     try:
         audit = run_audit(
             release_root,
@@ -163,12 +172,14 @@ def run_predeploy(
     ok, breaches = evaluate(audit)
     if not ok:
         errors.extend(breaches)
+
+    audit["release_metadata"] = metadata
     return not errors, errors, audit
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("release_root", type=Path, help="built release directory to validate")
+    parser.add_argument("release_root", type=Path, help="finalized release directory to validate")
     parser.add_argument("--base-url", default="https://x-gu.ru")
     parser.add_argument("--keep-config", type=Path, default=None, help="normally omitted; release manifest is used")
     parser.add_argument("--whitelist", type=Path, default=None, help="normally omitted; release whitelist snapshot is used")
@@ -192,12 +203,15 @@ def main() -> int:
 
     assert audit is not None
     stats = audit["stats"]
+    metadata = audit["release_metadata"]
     print("Pre-deploy check: OK")
     print(f"  pages={stats['pages_total']}")
     print(f"  sitemap_urls={audit['sitemap_urls']}")
     print(f"  policy_checked_pages={stats['policy_checked_pages']}")
     print(f"  noindex_total={stats['has_noindex']}")
-    print("  release policy + whitelist provenance/hash verified")
+    print(f"  tooling_revision={metadata['tooling_revision']}")
+    print(f"  release_content_sha256={metadata['content_sha256']}")
+    print("  release fingerprint + policy + whitelist provenance/hash verified")
     return 0
 
 
