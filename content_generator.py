@@ -6,19 +6,20 @@ without a risky full rewrite of the legacy renderer.
 
 Key protections:
 - canonical template resolution and HTML auto-escaping;
-- index policy follows the active release through ``current``;
-- missing policy/whitelist fail closed;
+- index policy and whitelist follow the active release through ``current``;
+- missing/mismatched policy or whitelist fail closed;
 - synthetic review/rating/proof markup is stripped from generated HTML;
 - one city morphology implementation is shared across render/repair tools;
 - the existing legacy API remains available to callers.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -33,8 +34,6 @@ except ImportError:  # Public-repository/root execution.
     import _content_generator_legacy as _legacy  # type: ignore
 
 
-# Re-export the legacy surface first. Existing imports such as
-# ``from content_generator import _render_html_landing`` keep working.
 for _name in dir(_legacy):
     if not _name.startswith("__"):
         globals().setdefault(_name, getattr(_legacy, _name))
@@ -47,6 +46,7 @@ _TEMPLATE_NAMES = {
     "homepage_master.html.j2",
 }
 _RELEASE_KEEP_FILENAME = ".xgu-index-keep.json"
+_RELEASE_WHITELIST_FILENAME = ".xgu-whitelist.txt"
 _DEFAULT_CURRENT_ROOT = Path("/var/www/x-gu.ru/current")
 
 _ORIGINAL_RENDER_LANDING = _legacy._render_html_landing
@@ -60,7 +60,6 @@ def _env_true(name: str) -> bool:
 def _candidate_repo_roots() -> list[Path]:
     here = Path(__file__).resolve()
     candidates = [here.parent]
-    # Private backend layout: <repo>/app/services/content_generator.py.
     if len(here.parents) >= 3:
         candidates.append(here.parents[2])
     candidates.append(Path.cwd())
@@ -83,8 +82,6 @@ def _candidate_template_dirs() -> list[Path]:
 
     for root in _candidate_repo_roots():
         candidates.append(root / "server-opt" / "templates")
-
-    # Compatibility fallback for older deployments.
     candidates.append(Path("app/templates"))
 
     unique: list[Path] = []
@@ -112,17 +109,16 @@ def _template_env() -> Environment:
     )
 
 
-def _data_file(name: str, env_name: str | None = None) -> Path:
-    if env_name:
-        explicit = os.getenv(env_name, "").strip()
-        if explicit:
-            return Path(explicit).resolve()
+def _data_file(name: str) -> Path:
     for root in _candidate_repo_roots():
         candidate = root / "data" / name
         if candidate.exists():
             return candidate.resolve()
-    # Stable diagnostic/fallback path even when the file does not exist.
     return (_candidate_repo_roots()[0] / "data" / name).resolve()
+
+
+def _current_root() -> Path:
+    return Path(os.getenv("XGU_CURRENT_ROOT", str(_DEFAULT_CURRENT_ROOT))).resolve()
 
 
 def _release_keep_config_path() -> Path:
@@ -133,23 +129,43 @@ def _release_keep_config_path() -> Path:
             raise RuntimeError(f"XGU_KEEP_CONFIG points to a missing file: {path}")
         return path
 
-    current_root = Path(os.getenv("XGU_CURRENT_ROOT", str(_DEFAULT_CURRENT_ROOT))).resolve()
-    release_manifest = current_root / _RELEASE_KEEP_FILENAME
+    release_manifest = _current_root() / _RELEASE_KEEP_FILENAME
     if release_manifest.is_file():
         return release_manifest
 
-    # The old global keep-config is migration-only. It must never silently
-    # replace a missing release manifest after release-bound policy is enabled.
     if _env_true("XGU_ALLOW_LEGACY_KEEP_CONFIG"):
         legacy = _data_file("index_keep_config.json")
         if legacy.is_file():
             return legacy
-
     return release_manifest
 
 
-def _whitelist_paths() -> set[tuple[str, str | None]]:
-    whitelist = _data_file("whitelist.txt", "XGU_WHITELIST")
+def _release_whitelist_path(keep_path: Path | None = None) -> Path:
+    explicit = os.getenv("XGU_WHITELIST", "").strip()
+    if explicit:
+        path = Path(explicit).resolve()
+        if not path.is_file():
+            raise RuntimeError(f"XGU_WHITELIST points to a missing file: {path}")
+        return path
+
+    if keep_path is not None and keep_path.name == _RELEASE_KEEP_FILENAME:
+        sibling = keep_path.parent / _RELEASE_WHITELIST_FILENAME
+        if sibling.is_file():
+            return sibling
+        return sibling
+
+    release_whitelist = _current_root() / _RELEASE_WHITELIST_FILENAME
+    if release_whitelist.is_file():
+        return release_whitelist
+
+    if _env_true("XGU_ALLOW_LEGACY_WHITELIST"):
+        legacy = _data_file("whitelist.txt")
+        if legacy.is_file():
+            return legacy
+    return release_whitelist
+
+
+def _whitelist_paths(whitelist: Path) -> set[tuple[str, str | None]]:
     if not whitelist.is_file():
         raise RuntimeError(f"Required whitelist is missing: {whitelist}")
 
@@ -159,32 +175,24 @@ def _whitelist_paths() -> set[tuple[str, str | None]]:
         if not value:
             continue
         parsed = urlparse(value)
-        if parsed.scheme or parsed.netloc:
-            if parsed.scheme != "https" or parsed.netloc != "x-gu.ru":
-                raise RuntimeError(f"Invalid whitelist URL on line {line_number}: {value}")
-            path = parsed.path
-        else:
-            path = value
-        parts = [part for part in path.split("/") if part]
-        if len(parts) == 1:
-            paths.add((parts[0], None))
-        elif len(parts) == 2:
-            paths.add((parts[0], parts[1]))
-        elif parts:
+        if parsed.scheme != "https" or parsed.netloc != "x-gu.ru":
+            raise RuntimeError(f"Invalid whitelist URL on line {line_number}: {value}")
+        if parsed.query or parsed.fragment:
+            raise RuntimeError(f"Whitelist query/fragment is not allowed on line {line_number}: {value}")
+        decoded_parts = [unquote(part) for part in parsed.path.split("/") if part]
+        if any(part in {".", ".."} or "/" in part or "\\" in part for part in decoded_parts):
+            raise RuntimeError(f"Unsafe whitelist path on line {line_number}: {value}")
+        if len(decoded_parts) == 1:
+            paths.add((decoded_parts[0], None))
+        elif len(decoded_parts) == 2:
+            paths.add((decoded_parts[0], decoded_parts[1]))
+        elif len(decoded_parts) > 2:
             raise RuntimeError(f"Unsupported whitelist path depth on line {line_number}: {value}")
     return paths
 
 
 def _load_keep_config() -> dict | None:
-    """Load the policy bound to the active release and fail closed if absent.
-
-    New deployments store ``.xgu-index-keep.json`` inside each release. Because
-    ``current`` is a symlink, switching a release also switches its index policy
-    atomically. ``XGU_KEEP_CONFIG`` can explicitly point candidate rendering at
-    a not-yet-active release manifest. The old ``data/index_keep_config.json``
-    is accepted only when ``XGU_ALLOW_LEGACY_KEEP_CONFIG=1`` is set for a
-    controlled migration.
-    """
+    """Load release-bound policy + whitelist and fail closed if inconsistent."""
     path = _release_keep_config_path()
     if not path.is_file():
         if _env_true("XGU_ALLOW_MISSING_KEEP_CONFIG"):
@@ -206,27 +214,51 @@ def _load_keep_config() -> dict | None:
     if not open_cities or not open_services:
         raise RuntimeError(f"Index keep-config has empty open_cities/open_services: {path}")
 
-    if path.name == _RELEASE_KEEP_FILENAME:
+    legacy_keep = path.name == "index_keep_config.json" and _env_true("XGU_ALLOW_LEGACY_KEEP_CONFIG")
+    whitelist = _release_whitelist_path(path)
+
+    if not legacy_keep:
         source = str(payload.get("policy_source") or "").strip()
         digest = str(payload.get("policy_sha256") or "").strip().lower()
+        whitelist_source = str(payload.get("whitelist_source") or "").strip()
+        whitelist_digest = str(payload.get("whitelist_sha256") or "").strip().lower()
         if not source:
             raise RuntimeError(f"Release keep-config has no policy_source: {path}")
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
             raise RuntimeError(f"Release keep-config has invalid policy_sha256: {path}")
+        if not whitelist_source:
+            raise RuntimeError(f"Release keep-config has no whitelist_source: {path}")
+        if len(whitelist_digest) != 64 or any(char not in "0123456789abcdef" for char in whitelist_digest):
+            raise RuntimeError(f"Release keep-config has invalid whitelist_sha256: {path}")
+        if not whitelist.is_file():
+            raise RuntimeError(f"Release whitelist is missing: {whitelist}")
+        actual_whitelist_digest = hashlib.sha256(whitelist.read_bytes()).hexdigest()
+        if actual_whitelist_digest != whitelist_digest:
+            raise RuntimeError(
+                f"Release whitelist SHA-256 mismatch: manifest={whitelist_digest} actual={actual_whitelist_digest}"
+            )
+    else:
+        if not _env_true("XGU_ALLOW_LEGACY_WHITELIST"):
+            raise RuntimeError(
+                "Legacy keep-config requires XGU_ALLOW_LEGACY_WHITELIST=1 as a separate migration opt-in"
+            )
 
     return {
         "open_cities": open_cities,
         "open_services": open_services,
-        "whitelist_paths": _whitelist_paths(),
+        "whitelist_paths": _whitelist_paths(whitelist),
         "policy_source": payload.get("policy_source"),
         "policy_sha256": payload.get("policy_sha256"),
+        "whitelist_source": payload.get("whitelist_source"),
+        "whitelist_sha256": payload.get("whitelist_sha256"),
         "path": path,
+        "whitelist_path": whitelist,
     }
 
 
 def _page_is_open(city_slug: str, service_slug: str | None = None) -> bool:
     keep = _load_keep_config()
-    if keep is None:  # Only possible via the explicit migration escape hatch.
+    if keep is None:
         return True
     if (city_slug, service_slug) in keep["whitelist_paths"]:
         return True
@@ -236,7 +268,6 @@ def _page_is_open(city_slug: str, service_slug: str | None = None) -> bool:
 
 
 def _clean_jsonld(value):
-    """Remove ungrounded ratings/reviews recursively from JSON-LD."""
     if isinstance(value, dict):
         cleaned = {}
         for key, item in value.items():
@@ -262,10 +293,8 @@ def _sanitize_jsonld(html: str) -> str:
             payload = json.loads(raw)
         except (TypeError, ValueError, json.JSONDecodeError):
             return match.group(0)
-
         if isinstance(payload, dict) and payload.get("@type") == "LocalBusiness":
             return ""
-
         payload = _clean_jsonld(payload)
         compact = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         return f"{match.group(1)}{compact}{match.group(3)}"
@@ -347,7 +376,6 @@ def _render_city_hub_html(*args, **kwargs) -> str:
     return _sanitize_generated_html(_ORIGINAL_RENDER_CITY_HUB(*args, **kwargs))
 
 
-# Patch legacy globals so legacy functions resolve hardened hooks internally.
 _legacy._template_env = _template_env
 _legacy._load_keep_config = _load_keep_config
 _legacy._page_is_open = _page_is_open
