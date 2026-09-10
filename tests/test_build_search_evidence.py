@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,7 @@ SPEC = importlib.util.spec_from_file_location("xgu_build_search_evidence", MODUL
 if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Cannot load search evidence module from {MODULE_PATH}")
 evidence_mod = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = evidence_mod
 SPEC.loader.exec_module(evidence_mod)
 
 
