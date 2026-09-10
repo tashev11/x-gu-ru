@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from seo_healthcheck import run_audit
+from seo_healthcheck import RELEASE_KEEP_FILENAME, run_audit
 
 
 BASE = "https://example.test"
@@ -75,6 +75,17 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         self.assertEqual(stats["canonical_url_mismatch"], 0)
         self.assertEqual(stats["broken_internal_links"], 0)
         self.assertEqual(stats["invalid_jsonld_pages"], 0)
+        self.assertEqual(stats["bad_sitemap_urls"], 0)
+        self.assertEqual(stats["sitemap_orphan_urls"], 0)
+
+    def test_release_manifest_is_default_policy_for_release_root(self) -> None:
+        root, policy, whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        manifest = root / RELEASE_KEEP_FILENAME
+        manifest.write_text(policy.read_text(encoding="utf-8"), encoding="utf-8")
+        audit = run_audit(root, base_url=BASE, whitelist=whitelist)
+        self.assertEqual(Path(audit["keep_config"]), manifest)
+        self.assertTrue(audit["policy_loaded"])
 
     def test_detects_robots_and_sitemap_inversions(self) -> None:
         root, policy, whitelist, temp = self._fixture()
@@ -95,6 +106,38 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         self.assertEqual(stats["unexpected_index_closed"], 1)
         self.assertEqual(stats["open_missing_sitemap"], 1)
         self.assertEqual(stats["closed_in_sitemap"], 1)
+
+    def test_detects_sitemap_orphan_and_bad_external_url(self) -> None:
+        root, policy, whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        (root / "sitemap.xml").write_text(
+            f"""<?xml version="1.0"?><urlset>
+<url><loc>{BASE}/moskva/</loc></url>
+<url><loc>{BASE}/ghost/</loc></url>
+<url><loc>https://evil.example/page/</loc></url>
+</urlset>""",
+            encoding="utf-8",
+        )
+        audit = run_audit(root, base_url=BASE, keep_config=policy, whitelist=whitelist)
+        self.assertEqual(audit["stats"]["sitemap_orphan_urls"], 1)
+        self.assertEqual(audit["stats"]["bad_sitemap_urls"], 1)
+
+    def test_sitemap_index_shard_loc_is_not_counted_as_page_url(self) -> None:
+        root, policy, whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        sitemaps = root / "sitemaps"
+        sitemaps.mkdir()
+        (root / "sitemap.xml").write_text(
+            f"<sitemapindex><sitemap><loc>{BASE}/sitemaps/sitemap-1.xml</loc></sitemap></sitemapindex>",
+            encoding="utf-8",
+        )
+        (sitemaps / "sitemap-1.xml").write_text(
+            f"<urlset><url><loc>{BASE}/moskva/</loc></url></urlset>",
+            encoding="utf-8",
+        )
+        audit = run_audit(root, base_url=BASE, keep_config=policy, whitelist=whitelist)
+        self.assertEqual(audit["sitemap_urls"], 1)
+        self.assertEqual(audit["stats"]["sitemap_orphan_urls"], 0)
 
     def test_attribute_order_does_not_break_meta_detection(self) -> None:
         root, policy, whitelist, temp = self._fixture()
