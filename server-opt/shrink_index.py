@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Manage the indexable core of an x-gu.ru release candidate.
 
-Dry-run by default. Apply writes only to an isolated release candidate unless an
-explicit emergency override allows active current. The resulting policy and
-whitelist are stored inside the release so switching ``current`` switches the
-entire indexability contract atomically.
+Policy v1 keeps the historical ``open_cities × open_services`` matrix.
+Policy v2 opens exact ``city/service`` pairs while city hubs remain controlled by
+``open_cities``. Dry-run is the default and production writes are release-first.
 """
 from __future__ import annotations
 
@@ -22,6 +21,12 @@ from urllib.parse import unquote, urlparse
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from index_policy import (  # noqa: E402
+    keep_urls as policy_keep_urls,
+    manifest_policy_fields,
+    normalize_policy_payload,
+    policy_digest,
+)
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
@@ -47,69 +52,48 @@ INDEX_TAG = (
 )
 
 
-def _dedupe(values: list[object]) -> list[str]:
-    cleaned = [str(value).strip() for value in values if str(value).strip()]
-    return list(dict.fromkeys(cleaned))
-
-
-def _validate_slugs(values: list[str], label: str) -> None:
-    invalid = [value for value in values if SLUG_RE.fullmatch(value) is None]
-    if invalid:
-        raise SystemExit(f"Invalid {label} slug(s): {', '.join(invalid[:10])}")
-
-
-def _policy_digest(cities: list[str], services: list[str]) -> str:
-    payload = json.dumps(
-        {"open_cities": cities, "open_services": services},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _load_policy_file(path: Path, *, allow_example: bool = False) -> tuple[list[str], list[str]]:
+def _read_policy_payload(path: Path, *, allow_example: bool = False) -> dict:
     if not path.is_file():
         raise SystemExit(f"Policy file not found: {path}")
     try:
         payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Policy file is invalid JSON: {path}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise SystemExit("Policy root must be a JSON object")
-    if payload.get("example_only") and not allow_example:
-        raise SystemExit(
-            f"Refusing example-only policy: {path}. Copy it to a reviewed production policy, "
-            "set example_only=false, and record the review source/date."
+    try:
+        return normalize_policy_payload(
+            payload,
+            require_review_metadata=not bool(payload.get("example_only")),
+            allow_example=allow_example,
         )
-    if not payload.get("example_only"):
-        if not str(payload.get("reviewed_at") or "").strip():
-            raise SystemExit("Production policy must contain reviewed_at")
-        if not str(payload.get("source_note") or "").strip():
-            raise SystemExit("Production policy must contain source_note")
-
-    cities = _dedupe(list(payload.get("open_cities") or []))
-    services = _dedupe(list(payload.get("open_services") or []))
-    if not cities or not services:
-        raise SystemExit("Policy must contain non-empty open_cities and open_services")
-    _validate_slugs(cities, "city")
-    _validate_slugs(services, "service")
-    return cities, services
+    except ValueError as exc:
+        raise SystemExit(f"Invalid index policy {path}: {exc}") from exc
 
 
-def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[str], list[str], str, str]:
+def load_policy_model(path: Path | None, *, use_builtin: bool = False) -> tuple[dict, str, str]:
     if use_builtin:
-        cities, services = _load_policy_file(BUNDLED_BASELINE)
+        policy = _read_policy_payload(BUNDLED_BASELINE)
         source = f"bundled-emergency-baseline:{BUNDLED_BASELINE}"
-        return cities, services, source, _policy_digest(cities, services)
+        return policy, source, policy_digest(policy)
 
     if path is None or not path.is_file():
         raise SystemExit(
             "Reviewed index policy is required. Provide --policy /path/to/index_policy.json "
             "or explicitly use --use-builtin-policy for emergency recovery only."
         )
-    cities, services = _load_policy_file(path)
-    return cities, services, str(path.resolve()), _policy_digest(cities, services)
+    policy = _read_policy_payload(path)
+    return policy, str(path.resolve()), policy_digest(policy)
+
+
+def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[str], list[str], str, str]:
+    """Compatibility wrapper returning city/service inventory plus provenance."""
+    policy, source, digest = load_policy_model(path, use_builtin=use_builtin)
+    return list(policy["open_cities"]), list(policy["open_services"]), source, digest
+
+
+def _validate_slugs(values: list[str], label: str) -> None:
+    invalid = [value for value in values if SLUG_RE.fullmatch(value) is None]
+    if invalid:
+        raise SystemExit(f"Invalid {label} slug(s): {', '.join(invalid[:10])}")
 
 
 def _canonical_whitelist_url(value: str) -> str:
@@ -139,13 +123,11 @@ def load_whitelist_urls(whitelist: Path) -> set[str]:
         raise SystemExit(
             f"Whitelist not found: {whitelist}. Refusing index-core changes because protected URLs are unknown."
         )
-
     urls: set[str] = set()
     try:
         lines = whitelist.read_text(encoding="utf-8", errors="strict").splitlines()
     except (OSError, UnicodeError) as exc:
         raise SystemExit(f"Cannot read whitelist: {whitelist}: {exc}") from exc
-
     for line_number, line in enumerate(lines, start=1):
         value = line.strip()
         if not value:
@@ -172,21 +154,24 @@ def url_for(html: Path, web_root: Path) -> str:
     return f"{BASE}/{rel.as_posix()}/"
 
 
+def build_keep_urls_for_policy(whitelist_urls: set[str], policy: dict) -> set[str]:
+    return policy_keep_urls(policy, whitelist_urls, base_url=BASE)
+
+
 def build_keep_urls_from_whitelist(
     whitelist_urls: set[str],
     open_cities: list[str],
     open_services: list[str],
 ) -> set[str]:
-    _validate_slugs(open_cities, "city")
-    _validate_slugs(open_services, "service")
-    keep = set(whitelist_urls)
-    keep.add(f"{BASE}/")
-    keep.add(f"{BASE}/privacy/")
-    for city in open_cities:
-        keep.add(f"{BASE}/{city}/")
-        for service in open_services:
-            keep.add(f"{BASE}/{city}/{service}/")
-    return keep
+    """Historical v1 matrix helper retained for scripts/tests."""
+    policy = normalize_policy_payload(
+        {
+            "policy_version": 1,
+            "open_cities": open_cities,
+            "open_services": open_services,
+        }
+    )
+    return build_keep_urls_for_policy(whitelist_urls, policy)
 
 
 def build_keep_urls(whitelist: Path, open_cities: list[str], open_services: list[str]) -> set[str]:
@@ -270,18 +255,26 @@ def write_release_whitelist(web_root: Path, urls: set[str]) -> Path:
 
 def write_release_keep_config(
     web_root: Path,
-    open_cities: list[str],
-    open_services: list[str],
+    open_cities: list[str] | None = None,
+    open_services: list[str] | None = None,
     *,
+    policy: dict | None = None,
     policy_source: str,
     policy_sha256: str,
     whitelist_source: str,
     whitelist_sha256: str,
 ) -> Path:
+    if policy is None:
+        policy = normalize_policy_payload(
+            {
+                "policy_version": 1,
+                "open_cities": open_cities or [],
+                "open_services": open_services or [],
+            }
+        )
     path = web_root / RELEASE_KEEP_FILENAME
     payload = {
-        "open_cities": open_cities,
-        "open_services": open_services,
+        **manifest_policy_fields(policy),
         "policy_source": policy_source,
         "policy_sha256": policy_sha256,
         "whitelist_source": whitelist_source,
@@ -296,7 +289,6 @@ def write_sitemap(web_root: Path, keep: set[str]) -> None:
     shard_dir = web_root / "sitemaps"
     shard_dir.mkdir(parents=True, exist_ok=True)
     shard = shard_dir / "sitemap-1.xml"
-
     urls = sorted(keep)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
@@ -319,11 +311,11 @@ def write_sitemap(web_root: Path, keep: set[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="apply robots/sitemap/release-policy changes")
-    parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY, help="reviewed JSON open_cities/open_services policy")
+    parser.add_argument("--policy", type=Path, default=DEFAULT_POLICY, help="reviewed JSON index policy v1 or v2")
     parser.add_argument(
         "--use-builtin-policy",
         action="store_true",
-        help="explicit emergency fallback to the bundled historical baseline",
+        help="explicit emergency fallback to the bundled historical v1 baseline",
     )
     parser.add_argument("--web-root", type=Path, default=DEFAULT_WEB_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
@@ -339,20 +331,20 @@ def main() -> int:
     if not args.web_root.is_dir():
         raise SystemExit(f"Web root not found: {args.web_root}")
 
-    open_cities, open_services, policy_source, policy_sha256 = load_policy(
-        args.policy,
-        use_builtin=args.use_builtin_policy,
-    )
+    policy, policy_source, policy_sha256 = load_policy_model(args.policy, use_builtin=args.use_builtin_policy)
     whitelist_urls = load_whitelist_urls(args.whitelist)
     whitelist_sha256 = whitelist_digest(whitelist_urls)
-    keep = build_keep_urls_from_whitelist(whitelist_urls, open_cities, open_services)
+    keep = build_keep_urls_for_policy(whitelist_urls, policy)
+
+    print(f"policy version: {policy['policy_version']} ({policy['policy_mode']})")
     print(f"policy source: {policy_source}")
     print(f"policy sha256: {policy_sha256}")
     print(f"whitelist source: {args.whitelist.resolve()}")
     print(f"whitelist sha256: {whitelist_sha256}")
     print(
-        f"policy: cities={len(open_cities)} services={len(open_services)} "
-        f"whitelist_urls={len(whitelist_urls)} protected/indexable_urls={len(keep)}"
+        f"policy: cities={len(policy['open_cities'])} services={len(policy['open_services'])} "
+        f"pairs={len(policy['open_pairs'])} whitelist_urls={len(whitelist_urls)} "
+        f"protected/indexable_urls={len(keep)}"
     )
 
     operations, scanned, kept, errors = make_plan(args.web_root, keep)
@@ -393,8 +385,7 @@ def main() -> int:
         whitelist_path = write_release_whitelist(args.web_root, whitelist_urls)
         keep_path = write_release_keep_config(
             args.web_root,
-            open_cities,
-            open_services,
+            policy=policy,
             policy_source=policy_source,
             policy_sha256=policy_sha256,
             whitelist_source=str(args.whitelist.resolve()),
