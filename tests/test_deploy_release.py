@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from index_policy import normalize_policy_payload, policy_digest
 from release_integrity import build_release_metadata, write_release_metadata
 
 
@@ -29,7 +30,7 @@ class DeployReleaseTests(unittest.TestCase):
         )
         write_release_metadata(release, payload)
 
-    def _release(self, root: Path, name: str) -> Path:
+    def _release(self, root: Path, name: str, *, policy_version: int = 1) -> Path:
         release = root / name
         release.mkdir()
         (release / "index.html").write_text("<html><head><title>ok</title></head></html>", encoding="utf-8")
@@ -42,12 +43,27 @@ class DeployReleaseTests(unittest.TestCase):
         whitelist = release / deploy_release.WHITELIST_FILENAME
         whitelist.write_text(whitelist_text, encoding="utf-8")
         whitelist_digest = hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest()
-        (release / deploy_release.KEEP_FILENAME).write_text(
-            json.dumps({
+
+        if policy_version == 1:
+            policy_fields = {
+                "policy_version": 1,
                 "open_cities": ["moskva"],
                 "open_services": ["seo-audit-saita"],
+            }
+        else:
+            policy_fields = {
+                "policy_version": 2,
+                "policy_mode": "pairs",
+                "open_cities": ["moskva"],
+                "open_pairs": ["moskva/seo-audit-saita"],
+                "open_services": ["seo-audit-saita"],
+            }
+        normalized = normalize_policy_payload(policy_fields)
+        (release / deploy_release.KEEP_FILENAME).write_text(
+            json.dumps({
+                **policy_fields,
                 "policy_source": "/reviewed/index_policy.json",
-                "policy_sha256": "a" * 64,
+                "policy_sha256": policy_digest(normalized),
                 "whitelist_source": "/reviewed/whitelist.txt",
                 "whitelist_sha256": whitelist_digest,
             }),
@@ -66,11 +82,39 @@ class DeployReleaseTests(unittest.TestCase):
             self.assertTrue(any(deploy_release.WHITELIST_FILENAME in error for error in errors))
             self.assertTrue(any(deploy_release.RELEASE_METADATA_FILENAME in error for error in errors))
 
+    def test_valid_v2_policy_passes_structural_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            release = self._release(Path(temp), "candidate", policy_version=2)
+            errors = deploy_release.validate_release(release)
+            self.assertEqual(errors, [])
+
+    def test_v2_pair_under_closed_city_is_rejected_structurally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            release = self._release(Path(temp), "candidate", policy_version=2)
+            keep = release / deploy_release.KEEP_FILENAME
+            payload = json.loads(keep.read_text(encoding="utf-8"))
+            payload["open_cities"] = ["tver"]
+            keep.write_text(json.dumps(payload), encoding="utf-8")
+            errors = deploy_release.validate_release(release)
+            self.assertTrue(any("policy is invalid" in error for error in errors))
+
+    def test_stale_policy_digest_is_rejected_structurally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            release = self._release(Path(temp), "candidate", policy_version=2)
+            keep = release / deploy_release.KEEP_FILENAME
+            payload = json.loads(keep.read_text(encoding="utf-8"))
+            payload["open_pairs"].append("moskva/prodvizhenie-saita")
+            payload["open_services"].append("prodvizhenie-saita")
+            keep.write_text(json.dumps(payload), encoding="utf-8")
+            errors = deploy_release.validate_release(release)
+            self.assertTrue(any("policy SHA-256 mismatch" in error for error in errors))
+
     def test_invalid_keep_manifest_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             release = self._release(Path(temp), "candidate")
             (release / deploy_release.KEEP_FILENAME).write_text(
                 json.dumps({
+                    "policy_version": 1,
                     "open_cities": ["moskva"],
                     "open_services": ["seo-audit-saita"],
                     "policy_source": "reviewed",
