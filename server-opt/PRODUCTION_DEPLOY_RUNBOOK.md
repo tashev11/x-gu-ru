@@ -242,7 +242,7 @@ python server-opt/deploy_release.py "$RELEASE" --apply
 
 ```bash
 readlink -f /var/www/x-gu.ru/current
-python /opt/x-gu-ru-tooling/seo_healthcheck.py
+SEOHC_ROOT=/var/www/x-gu.ru/current python /opt/x-gu-ru-tooling/seo_healthcheck.py
 ```
 
 Локальная HTTPS-проверка через Nginx без зависимости от внешнего DNS:
