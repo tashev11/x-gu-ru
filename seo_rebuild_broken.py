@@ -2,13 +2,14 @@
 """Rebuild pages for a reviewed set of broken city directories.
 
 Dry-run by default. Apply must target an isolated release candidate unless an
-explicit emergency override allows active current. Missing city/service input
-is a hard error before any directory or file is created.
+explicit emergency override allows active current. Missing city/service/policy
+input is a hard error before any directory or file is created.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
 from pathlib import Path
@@ -31,6 +32,8 @@ from release_safety import (  # noqa: E402
 PUBLIC_ROOT = DEFAULT_CURRENT
 KEYWORDS_CSV = APP_ROOT / "data/keywords_all.csv"
 CITIES_CSV = APP_ROOT / "data/ru_cities_with_population.csv"
+WHITELIST = APP_ROOT / "data/whitelist.txt"
+MANIFEST_NAME = ".xgu-index-keep.json"
 
 BROKEN_CITY_SLUGS = {
     "tula",
@@ -71,6 +74,36 @@ def load_services() -> list[SimpleNamespace]:
             if name and slug:
                 services.append(SimpleNamespace(name=name, slug=slug, niche=niche))
     return services
+
+
+def validate_release_policy(root: Path) -> tuple[Path | None, list[str]]:
+    errors: list[str] = []
+    manifest = root / MANIFEST_NAME
+    if not manifest.is_file():
+        errors.append(f"release policy manifest missing: {manifest}")
+        return None, errors
+    if not WHITELIST.is_file():
+        errors.append(f"required whitelist missing: {WHITELIST}")
+
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        errors.append(f"release policy manifest is invalid JSON: {exc}")
+        return manifest, errors
+
+    if not isinstance(payload, dict):
+        errors.append("release policy manifest root must be a JSON object")
+        return manifest, errors
+    if not payload.get("open_cities"):
+        errors.append("release policy manifest has no open_cities")
+    if not payload.get("open_services"):
+        errors.append("release policy manifest has no open_services")
+    if not str(payload.get("policy_source") or "").strip():
+        errors.append("release policy manifest has no policy_source")
+    digest = str(payload.get("policy_sha256") or "").strip().lower()
+    if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+        errors.append("release policy manifest policy_sha256 is not a valid SHA-256 digest")
+    return manifest, errors
 
 
 def main() -> int:
@@ -156,6 +189,20 @@ def main() -> int:
         print(f"Refusing apply before directory/file writes: {target_error}", file=sys.stderr)
         return 3
 
+    manifest, policy_errors = validate_release_policy(args.root)
+    if policy_errors:
+        for error in policy_errors:
+            print(f"  ERROR: {error}", file=sys.stderr)
+        print("Refusing rebuild without the release candidate's reviewed policy manifest.", file=sys.stderr)
+        return 3
+    assert manifest is not None
+
+    # Rendering must use the candidate's policy, never the currently active
+    # release's manifest. This keeps robots/indexability consistent with the
+    # release that will later be validated and atomically switched live.
+    os.environ["XGU_KEEP_CONFIG"] = str(manifest.resolve())
+    os.environ["XGU_WHITELIST"] = str(WHITELIST.resolve())
+
     site = SimpleNamespace(id=1)
     total_built = 0
     try:
@@ -185,7 +232,7 @@ def main() -> int:
         )
         return 4
 
-    print(f"[APPLIED] total_pages_built={total_built}")
+    print(f"[APPLIED] total_pages_built={total_built} policy_manifest={manifest}")
     return 0
 
 
