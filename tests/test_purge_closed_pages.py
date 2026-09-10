@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +22,41 @@ def html(*, noindex: bool) -> str:
 
 
 class PurgeClosedPagesTests(unittest.TestCase):
+    def _contract(self, root: Path, whitelist_text: str = "") -> tuple[Path, Path]:
+        whitelist = root / purge.WHITELIST_FILENAME
+        whitelist.write_text(whitelist_text, encoding="utf-8")
+        manifest = root / purge.KEEP_FILENAME
+        manifest.write_text(
+            json.dumps(
+                {
+                    "open_cities": ["moskva"],
+                    "open_services": ["seo-audit-saita"],
+                    "policy_source": "reviewed",
+                    "policy_sha256": "a" * 64,
+                    "whitelist_source": "reviewed",
+                    "whitelist_sha256": hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return manifest, whitelist
+
+    def test_release_contract_accepts_matching_whitelist_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest, whitelist = self._contract(root, "https://x-gu.ru/moskva/\n")
+            resolved, errors = purge.validate_release_contract(root)
+            self.assertEqual(errors, [])
+            self.assertEqual(resolved, whitelist)
+
+    def test_release_contract_rejects_whitelist_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            _manifest, whitelist = self._contract(root)
+            whitelist.write_text("https://x-gu.ru/moskva/\n", encoding="utf-8")
+            _resolved, errors = purge.validate_release_contract(root)
+            self.assertTrue(any("SHA-256 mismatch" in error for error in errors))
+
     def test_missing_index_directory_is_never_delete_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
