@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -17,12 +18,24 @@ from seo_healthcheck import evaluate, run_audit  # noqa: E402
 
 
 KEEP_FILENAME = ".xgu-index-keep.json"
-REQUIRED_POLICY_METADATA = ("policy_source", "policy_sha256")
+WHITELIST_FILENAME = ".xgu-whitelist.txt"
+REQUIRED_POLICY_METADATA = (
+    "policy_source",
+    "policy_sha256",
+    "whitelist_source",
+    "whitelist_sha256",
+)
+
+
+def _valid_sha256(value: object) -> bool:
+    digest = str(value or "").strip().lower()
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
 def _validate_whitelist(whitelist: Path, base_url: str) -> list[str]:
     if not whitelist.is_file():
         return [f"whitelist missing: {whitelist}"]
+
     errors: list[str] = []
     base = urlparse(base_url.rstrip("/"))
     try:
@@ -30,22 +43,29 @@ def _validate_whitelist(whitelist: Path, base_url: str) -> list[str]:
     except (OSError, UnicodeError) as exc:
         return [f"cannot read whitelist: {exc}"]
 
+    seen: set[str] = set()
     for line_number, line in enumerate(lines, start=1):
         value = line.strip()
         if not value:
             continue
-        if value.startswith("/"):
-            value = base_url.rstrip("/") + value
         parsed = urlparse(value)
         if parsed.scheme != "https" or parsed.netloc != base.netloc:
-            errors.append(f"whitelist line {line_number} is not canonical HTTPS: {line.strip()}")
+            errors.append(f"whitelist line {line_number} is not canonical HTTPS: {value}")
             continue
         if parsed.query or parsed.fragment:
-            errors.append(f"whitelist line {line_number} contains query/fragment: {line.strip()}")
+            errors.append(f"whitelist line {line_number} contains query/fragment: {value}")
             continue
-        parts = [part for part in parsed.path.split("/") if part]
-        if len(parts) not in {1, 2}:
-            errors.append(f"whitelist line {line_number} has unsupported path depth: {line.strip()}")
+        decoded_parts = [unquote(part) for part in parsed.path.split("/") if part]
+        if any(part in {".", ".."} or "/" in part or "\\" in part for part in decoded_parts):
+            errors.append(f"whitelist line {line_number} contains unsafe path segment: {value}")
+            continue
+        if len(decoded_parts) > 2:
+            errors.append(f"whitelist line {line_number} has unsupported path depth: {value}")
+            continue
+        if value in seen:
+            errors.append(f"whitelist line {line_number} duplicates an earlier URL: {value}")
+            continue
+        seen.add(value)
     return errors
 
 
@@ -58,15 +78,24 @@ def validate_policy_files(
 ) -> list[str]:
     errors: list[str] = []
     if release_root is not None:
-        expected = (release_root.resolve() / KEEP_FILENAME)
-        if keep_config.resolve() != expected:
-            errors.append(f"keep-config must be the release manifest: expected={expected} got={keep_config.resolve()}")
+        root = release_root.resolve()
+        expected_keep = root / KEEP_FILENAME
+        expected_whitelist = root / WHITELIST_FILENAME
+        if keep_config.resolve() != expected_keep:
+            errors.append(
+                f"keep-config must be the release manifest: expected={expected_keep} got={keep_config.resolve()}"
+            )
+        if whitelist.resolve() != expected_whitelist:
+            errors.append(
+                f"whitelist must be the release snapshot: expected={expected_whitelist} got={whitelist.resolve()}"
+            )
 
     if not keep_config.is_file():
         errors.append(f"index keep-config missing: {keep_config}")
-        return errors + _validate_whitelist(whitelist, base_url)
-
     errors.extend(_validate_whitelist(whitelist, base_url))
+    if not keep_config.is_file():
+        return errors
+
     try:
         payload = json.loads(keep_config.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -84,9 +113,16 @@ def validate_policy_files(
         if not str(payload.get(key) or "").strip():
             errors.append(f"index keep-config has no {key}")
 
-    digest = str(payload.get("policy_sha256") or "").strip().lower()
-    if digest and (len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest)):
+    if payload.get("policy_sha256") and not _valid_sha256(payload.get("policy_sha256")):
         errors.append("index keep-config policy_sha256 is not a valid SHA-256 hex digest")
+    if payload.get("whitelist_sha256") and not _valid_sha256(payload.get("whitelist_sha256")):
+        errors.append("index keep-config whitelist_sha256 is not a valid SHA-256 hex digest")
+
+    if whitelist.is_file() and _valid_sha256(payload.get("whitelist_sha256")):
+        actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
+        expected = str(payload.get("whitelist_sha256")).strip().lower()
+        if actual != expected:
+            errors.append(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
     return errors
 
 
@@ -135,15 +171,16 @@ def main() -> int:
     parser.add_argument("release_root", type=Path, help="built release directory to validate")
     parser.add_argument("--base-url", default="https://x-gu.ru")
     parser.add_argument("--keep-config", type=Path, default=None, help="normally omitted; release manifest is used")
-    parser.add_argument("--whitelist", type=Path, default=Path("/opt/p3-app/data/whitelist.txt"))
+    parser.add_argument("--whitelist", type=Path, default=None, help="normally omitted; release whitelist snapshot is used")
     args = parser.parse_args()
 
     release_root = args.release_root.resolve()
     keep_config = args.keep_config.resolve() if args.keep_config else release_root / KEEP_FILENAME
+    whitelist = args.whitelist.resolve() if args.whitelist else release_root / WHITELIST_FILENAME
     ok, errors, audit = run_predeploy(
         release_root,
         keep_config=keep_config,
-        whitelist=args.whitelist.resolve(),
+        whitelist=whitelist,
         base_url=args.base_url,
     )
 
@@ -160,7 +197,7 @@ def main() -> int:
     print(f"  sitemap_urls={audit['sitemap_urls']}")
     print(f"  policy_checked_pages={stats['policy_checked_pages']}")
     print(f"  noindex_total={stats['has_noindex']}")
-    print("  release policy provenance present")
+    print("  release policy + whitelist provenance/hash verified")
     return 0
 
 
