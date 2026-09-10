@@ -1,0 +1,109 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "server-opt" / "predeploy_check.py"
+SPEC = importlib.util.spec_from_file_location("xgu_predeploy_check", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise RuntimeError(f"Cannot load predeploy module from {MODULE_PATH}")
+predeploy = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(predeploy)
+
+BASE = "https://x-gu.ru"
+
+
+def page_html(canonical: str, *, noindex: bool = False) -> str:
+    robots = "noindex, follow" if noindex else "index,follow"
+    body = " ".join(["контент"] * 270)
+    return f"""<!doctype html>
+<html lang="ru"><head>
+<title>Проверочная страница для безопасного релиза</title>
+<meta name="description" content="Проверочное описание страницы достаточной длины для строгого SEO контроля перед безопасной публикацией сайта.">
+<meta name="robots" content="{robots}">
+<link rel="canonical" href="{canonical}">
+<meta property="og:title" content="Проверка">
+<meta property="og:description" content="Проверка описания">
+<script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebPage"}}</script>
+</head><body><h1>Проверочная страница релиза</h1><p>{body}</p></body></html>"""
+
+
+class PredeployCheckTests(unittest.TestCase):
+    def _fixture(self):
+        temp = tempfile.TemporaryDirectory()
+        root = Path(temp.name)
+        release = root / "release"
+        release.mkdir()
+        (release / "index.html").write_text(page_html(f"{BASE}/"), encoding="utf-8")
+        (release / "moskva").mkdir()
+        (release / "moskva" / "index.html").write_text(page_html(f"{BASE}/moskva/"), encoding="utf-8")
+        (release / "tula").mkdir()
+        (release / "tula" / "index.html").write_text(page_html(f"{BASE}/tula/", noindex=True), encoding="utf-8")
+        (release / "sitemap.xml").write_text(
+            f"<?xml version='1.0'?><urlset><url><loc>{BASE}/</loc></url><url><loc>{BASE}/moskva/</loc></url></urlset>",
+            encoding="utf-8",
+        )
+        keep = root / "index_keep_config.json"
+        keep.write_text(
+            json.dumps(
+                {
+                    "open_cities": ["moskva"],
+                    "open_services": ["seo-audit-saita"],
+                    "policy_source": "/opt/p3-app/data/index_policy.json",
+                    "policy_sha256": "a" * 64,
+                }
+            ),
+            encoding="utf-8",
+        )
+        whitelist = root / "whitelist.txt"
+        whitelist.write_text("", encoding="utf-8")
+        return temp, release, keep, whitelist
+
+    def test_valid_release_and_policy_pass(self) -> None:
+        temp, release, keep, whitelist = self._fixture()
+        self.addCleanup(temp.cleanup)
+        ok, errors, audit = predeploy.run_predeploy(
+            release,
+            keep_config=keep,
+            whitelist=whitelist,
+            base_url=BASE,
+        )
+        self.assertTrue(ok, errors)
+        self.assertEqual(errors, [])
+        self.assertIsNotNone(audit)
+        self.assertTrue(audit["policy_loaded"])
+
+    def test_missing_policy_provenance_fails_before_audit(self) -> None:
+        temp, release, keep, whitelist = self._fixture()
+        self.addCleanup(temp.cleanup)
+        payload = json.loads(keep.read_text(encoding="utf-8"))
+        payload.pop("policy_sha256")
+        keep.write_text(json.dumps(payload), encoding="utf-8")
+
+        ok, errors, audit = predeploy.run_predeploy(
+            release,
+            keep_config=keep,
+            whitelist=whitelist,
+            base_url=BASE,
+        )
+        self.assertFalse(ok)
+        self.assertIsNone(audit)
+        self.assertTrue(any("policy_sha256" in error for error in errors))
+
+    def test_invalid_policy_digest_fails(self) -> None:
+        temp, release, keep, whitelist = self._fixture()
+        self.addCleanup(temp.cleanup)
+        payload = json.loads(keep.read_text(encoding="utf-8"))
+        payload["policy_sha256"] = "not-a-digest"
+        keep.write_text(json.dumps(payload), encoding="utf-8")
+
+        errors = predeploy.validate_policy_files(keep, whitelist)
+        self.assertTrue(any("valid SHA-256" in error for error in errors))
+
+
+if __name__ == "__main__":
+    unittest.main()
