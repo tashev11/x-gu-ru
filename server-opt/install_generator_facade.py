@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Install the hardened generator files into the private ``app.services`` package.
 
-Dry-run by default. With ``--apply`` the three files are staged first, existing
-targets are backed up, and the set is replaced via ``os.replace``. If any
-replacement fails, already-replaced targets are restored automatically.
+Dry-run by default. With ``--apply`` the required files are syntax-validated,
+staged first, existing targets are backed up, and the set is replaced via
+``os.replace``. If any replacement fails, already-replaced targets are restored
+automatically.
 """
 from __future__ import annotations
 
@@ -28,12 +29,23 @@ def validate_sources(source_root: Path) -> list[str]:
         path = source_root / name
         if not path.is_file():
             errors.append(f"missing source file: {path}")
-        elif path.stat().st_size == 0:
+            continue
+        if path.stat().st_size == 0:
             errors.append(f"empty source file: {path}")
+            continue
+        try:
+            source = path.read_text(encoding="utf-8", errors="strict")
+            compile(source, str(path), "exec")
+        except (OSError, UnicodeError, SyntaxError) as exc:
+            errors.append(f"invalid Python source {path}: {exc}")
     return errors
 
 
 def install_set(source_root: Path, dest: Path, backup_suffix: str) -> list[Path]:
+    errors = validate_sources(source_root)
+    if errors:
+        raise ValueError("; ".join(errors))
+
     dest.mkdir(parents=True, exist_ok=True)
     backups: dict[Path, Path | None] = {}
     staged: dict[Path, Path] = {}
@@ -44,7 +56,7 @@ def install_set(source_root: Path, dest: Path, backup_suffix: str) -> list[Path]
         for name in REQUIRED_FILES:
             source = source_root / name
             target = dest / name
-            temp = dest / f".{name}.next.{os.getpid()}"
+            temp = dest / f".{name}.next.{os.getpid()}.{time.time_ns()}"
             shutil.copy2(source, temp)
             staged[target] = temp
 
@@ -66,7 +78,13 @@ def install_set(source_root: Path, dest: Path, backup_suffix: str) -> list[Path]
             backup = backups.get(target)
             try:
                 if backup is not None and backup.exists():
-                    shutil.copy2(backup, target)
+                    restore_temp = target.with_name(f".{target.name}.rollback.{os.getpid()}.{time.time_ns()}")
+                    try:
+                        shutil.copy2(backup, restore_temp)
+                        os.replace(restore_temp, target)
+                    finally:
+                        if restore_temp.exists():
+                            restore_temp.unlink()
                 elif target.exists():
                     target.unlink()
             except Exception as rollback_exc:  # noqa: BLE001
@@ -109,7 +127,7 @@ def main() -> int:
         print(f"  {source_root / name} -> {dest / name}")
 
     if not args.apply:
-        print("[DRY-RUN] Nothing installed. Re-run with --apply after reviewing the file set.")
+        print("[DRY-RUN] Sources are syntactically valid; nothing installed. Re-run with --apply after review.")
         return 0
 
     suffix = ".bak." + time.strftime("%Y%m%d-%H%M%S")
