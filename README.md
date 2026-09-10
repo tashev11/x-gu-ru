@@ -104,6 +104,8 @@ Policy/whitelist validation rejects malformed slugs, missing review metadata, no
 
 ## Production sequence
 
+For a detailed SSH/Claude operator procedure, use [`server-opt/PRODUCTION_DEPLOY_RUNBOOK.md`](server-opt/PRODUCTION_DEPLOY_RUNBOOK.md). The runbook starts with read-only diagnostics and deliberately stops if the live `current` path is not yet a symlink.
+
 Example paths:
 
 ```bash
@@ -175,6 +177,8 @@ All are dry-run by default. Apply only after reviewing the plan:
 python server-opt/rerender_open_hubs.py --root "$RELEASE" --apply
 ```
 
+The backend-integrated rerender/rebuild/sanitizer commands import the installed hardened generator from `app.services.content_generator`; repository validation rejects a regression back to a potentially stale top-level `content_generator` import.
+
 The rerender/rebuild tools bind `XGU_KEEP_CONFIG` and `XGU_WHITELIST` to the **candidate's own** files before rendering and verify whitelist integrity.
 
 `rerender_hubs_home.py` additionally prevents a full rerender from repopulating homepage navigation with closed cities: homepage cities come from `open_cities`, and open city hubs expose only `open_services` plus per-city whitelist extras.
@@ -209,25 +213,13 @@ The release activity guard is re-evaluated immediately before **every** destruct
 python server-opt/predeploy_check.py "$RELEASE"
 ```
 
-The gate requires the policy manifest and whitelist snapshot from that exact release, verifies whitelist SHA-256, policy-checks every HTML page, and validates:
+The strict gate requires both embedded files from the exact release and validates their SHA/provenance before the HTML audit. It checks every HTML page against policy, including robots, sitemap membership, canonical, duplicates, JSON-LD and internal links.
 
-- title/description/H1/language/OG metadata;
-- canonical domain and canonical-to-page consistency;
-- duplicate title/H1/canonical groups;
-- JSON-LD validity;
-- internal broken page links;
-- open page accidentally `noindex`;
-- closed page accidentally indexable;
-- open page missing from sitemap;
-- closed page leaking into sitemap;
-- malformed/non-canonical sitemap URLs;
-- sitemap page URLs that have no corresponding release page.
-
-Serious integrity thresholds default to zero; see `.env.example`.
+Zero is the default tolerance for serious integrity failures; thresholds are documented in `.env.example`.
 
 ### 7. Preview and deploy
 
-`deploy_release.py` automatically executes structural checks plus the strict predeploy gate.
+`deploy_release.py` runs structural validation and strict predeploy itself.
 
 Preview:
 
@@ -241,7 +233,7 @@ Apply:
 python server-opt/deploy_release.py "$RELEASE" --apply
 ```
 
-A deployable release must be a direct child of the releases root and include at least:
+A deployable release requires at least:
 
 - `index.html`;
 - `robots.txt`;
@@ -249,13 +241,13 @@ A deployable release must be a direct child of the releases root and include at 
 - `.xgu-index-keep.json`;
 - `.xgu-whitelist.txt`.
 
-Sitemap indexes must point to existing local shard files on the canonical host. `current` is switched with an atomic symlink replacement.
+Sitemap indexes must reference existing local shards on the canonical host. The final `current` switch uses atomic symlink replacement. The previous target is printed as the rollback target.
 
-`--unsafe-skip-predeploy` is emergency-only and is not part of the normal pipeline.
+`--unsafe-skip-predeploy` is emergency-only.
 
 ### 8. Rollback
 
-Deploy prints the previous release as a rollback target. Roll back with:
+Use the previous release path printed by deploy:
 
 ```bash
 python server-opt/deploy_release.py \
@@ -263,9 +255,9 @@ python server-opt/deploy_release.py \
   --apply
 ```
 
-No current source whitelist needs to be supplied: the old release carries the exact whitelist snapshot and hashes that belong to it.
+Because every release contains its own policy **and whitelist snapshot**, rollback restores the complete historical indexability contract.
 
-### 9. Release retention
+### 9. Prune old releases
 
 Preview:
 
@@ -273,13 +265,13 @@ Preview:
 python server-opt/prune_releases.py --keep 5
 ```
 
-Apply:
+Apply only after stability is confirmed:
 
 ```bash
 python server-opt/prune_releases.py --keep 5 --apply
 ```
 
-Pruning considers only direct child release directories, protects `current`, and resolves `current` again immediately before each delete to reduce deploy/prune races.
+Pruning only considers direct children of the releases root, protects `current`, and resolves `current` again immediately before each delete.
 
 ## Hardened generator behavior
 
@@ -287,16 +279,15 @@ The facade enforces:
 
 - Jinja HTML auto-escaping;
 - canonical repository template preference;
-- active/candidate release-bound policy + whitelist;
-- whitelist SHA verification;
-- fail-closed missing/mismatched release contract;
-- explicit-only legacy policy/whitelist migration fallbacks;
+- release-bound index policy + whitelist;
+- explicit-only legacy global fallbacks;
+- fail-closed missing policy/whitelist;
 - shared city morphology;
 - removal/neutralization of generated `Review` / `AggregateRating`, generated city `LocalBusiness`, synthetic review sections, hash-derived KPI blocks and unsupported blanket proof claims.
 
-The legacy implementation remains preserved for compatibility, but its render paths are patched to use the hardened hooks.
+The legacy implementation remains preserved for compatibility and reviewability, but legacy render paths are patched to call the hardened hooks.
 
-## Install the generator facade
+## Install generator facade into the private backend
 
 Preview:
 
@@ -310,7 +301,9 @@ Apply:
 python server-opt/install_generator_facade.py --apply
 ```
 
-The installer syntax-checks every source file, stages the whole set, backs up existing files and atomically restores backups after a partial failure.
+The installer syntax-checks all source files before touching live targets, stages the full set, backs up existing files, replaces them, and atomically restores backups on a partial failure.
+
+After installation, do a small render smoke-test against a candidate release before bulk rendering.
 
 ## Project structure
 
@@ -318,28 +311,29 @@ The installer syntax-checks every source file, stages the whole set, backs up ex
 .
 ├── .github/workflows/ci.yml
 ├── .env.example
-├── release_safety.py                 # shared release guard + atomic writes
-├── content_generator.py              # hardened generator facade
-├── _content_generator_legacy.py      # preserved legacy implementation
-├── city_morphology.py                # shared city morphology
-├── seo_healthcheck.py                # release-contract aware offline audit
-├── seo_inplace_fix.py                # release-first grammar repair
-├── seo_rebuild_broken.py             # release-first targeted rebuild
-├── seo_title_extend.py                # release-first title repair
+├── release_safety.py
+├── content_generator.py
+├── _content_generator_legacy.py
+├── city_morphology.py
+├── seo_healthcheck.py
+├── seo_inplace_fix.py
+├── seo_rebuild_broken.py
+├── seo_title_extend.py
 ├── scripts/
-│   ├── validate_repo.py              # local + CI validation entrypoint
-│   └── repo_healthcheck.py           # architecture/safety invariants
-├── tests/                             # standalone regression tests
+│   ├── validate_repo.py
+│   └── repo_healthcheck.py
+├── tests/
 └── server-opt/
-    ├── templates/                     # canonical Jinja templates
-    ├── nginx/                         # canonical Nginx config
+    ├── PRODUCTION_DEPLOY_RUNBOOK.md
+    ├── templates/
+    ├── nginx/
     ├── index_policy.example.json
     ├── index_policy.baseline.json
-    ├── shrink_index.py                # source policy/whitelist -> release contract
-    ├── predeploy_check.py             # strict self-contained release gate
-    ├── deploy_release.py              # validated atomic symlink switch
-    ├── prune_releases.py              # race-safe retention
-    ├── purge_closed_pages.py          # guarded candidate deletion
+    ├── shrink_index.py
+    ├── predeploy_check.py
+    ├── deploy_release.py
+    ├── prune_releases.py
+    ├── purge_closed_pages.py
     ├── sanitize_generated_proof.py
     └── install_generator_facade.py
 ```
@@ -349,9 +343,9 @@ The installer syntax-checks every source file, stages the whole set, backs up ex
 - Python **3.11+**;
 - Ruff for full repository validation;
 - private `app.*` package for backend-integrated rendering commands;
-- production CSV/source policy/source whitelist for full render/index jobs.
+- production CSV/config files for full render/index jobs.
 
-Basic setup:
+Basic local setup:
 
 ```bash
 python -m venv .venv
@@ -365,40 +359,39 @@ Never commit populated `.env` files, API tokens, credentials or production secre
 
 ## Nginx/server hardening
 
-`server-opt/nginx/x-gu.ru.conf` is the only canonical vhost copy in this repository. The configuration includes:
+`server-opt/nginx/x-gu.ru.conf` is the only canonical vhost copy in the repository. The configuration includes:
 
 - canonical `www.x-gu.ru -> https://x-gu.ru` redirects;
 - HTTP -> HTTPS canonical redirect;
 - `server_tokens off`;
-- baseline security headers;
-- request-size + rate limiting for `/api/v1/leads/submit`;
+- baseline browser security headers;
+- request-size and rate limiting for `/api/v1/leads/submit`;
 - HTTP 429 for rate-limit rejection;
 - long-lived static asset caching.
 
-Always validate before reload:
+Deploy the global and vhost configs as a pair and always validate before reload:
 
 ```bash
 sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-`/console` is proxied to the private backend and must be authenticated/authorized there or restricted through Nginx/VPN/IP.
+`/console` is proxied to the private backend. It must be authenticated/authorized there or restricted through Nginx/VPN/IP before production exposure.
 
 ## Disk/log safety
 
-Cleanup scripts do not truncate active authentication/application logs. Journal retention is configurable. Release retention should prevent unlimited candidate accumulation on the disk-constrained server.
+Cleanup scripts do not truncate active authentication/application logs. Journal retention is configurable. Release retention should be used instead of accumulating unlimited candidates, especially on a disk-constrained server.
 
-Increasing disk capacity remains preferable to increasingly aggressive deletion of operational history.
+Increasing disk capacity remains preferable to increasingly aggressive destruction of operational history.
 
-## Operating rules
+## Security and operating rules
 
-- Never commit secrets or populated `.env` files.
-- Do not bulk-edit active `current` in normal operation.
-- Treat all `--unsafe-*` flags as emergency-only controls.
+- Never commit secrets or real `.env` files.
+- Do not bulk-edit the active `current` tree in normal operation.
+- Treat `--unsafe-*` flags as emergency-only break-glass controls.
 - Review dry-run counts before every `--apply`.
 - Never deploy a release that failed predeploy validation.
-- Keep policy and whitelist review evidence outside the generated release; keep their hashes/provenance inside it.
-- Nginx controls complement rather than replace backend validation/anti-spam.
+- Nginx limits complement but do not replace backend payload validation/anti-spam.
 - Privileged backend routes require independent authentication/authorization.
 - Merge security-sensitive changes only after the validation suite has actually executed successfully.
 
