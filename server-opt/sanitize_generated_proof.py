@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Remove synthetic proof/review markup from already-deployed HTML.
+"""Remove synthetic proof/review markup from generated HTML.
 
-The hardened generator sanitizes all newly rendered pages. This migration
-brings existing deployed HTML to the same state without requiring a full site
-rebuild.
-
-Safe by default: without ``--apply`` only counts candidate files. Real writes
-require an explicit flag.
+Safe by default: without ``--apply`` only candidate files are counted. Apply is
+intended for an isolated release candidate; active-current writes need an
+explicit emergency override. Each changed HTML file is replaced atomically.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
+
 
 APP_ROOT = Path("/opt/p3-app")
 DEFAULT_ROOT = Path("/var/www/x-gu.ru/current")
@@ -22,17 +21,39 @@ sys.path.insert(0, str(APP_ROOT))
 os.chdir(APP_ROOT)
 
 from content_generator import _sanitize_generated_html  # noqa: E402
+from release_safety import DEFAULT_CURRENT, DEFAULT_RELEASES_ROOT, mutation_target_error  # noqa: E402
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    temp = path.with_name(f".{path.name}.next.{os.getpid()}.{time.time_ns()}")
+    try:
+        temp.write_text(text, encoding="utf-8")
+        os.chmod(temp, path.stat().st_mode & 0o777)
+        os.replace(temp, path)
+    finally:
+        if temp.exists():
+            temp.unlink()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="actually write sanitized HTML")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
+    parser.add_argument(
+        "--unsafe-allow-active-current",
+        action="store_true",
+        help="emergency override allowing writes directly to active current",
+    )
     parser.add_argument("--limit", type=int, default=0, help="optional maximum files to scan")
     args = parser.parse_args()
 
     if not args.root.is_dir():
         print(f"Root not found: {args.root}", file=sys.stderr)
+        return 1
+    if args.limit < 0:
+        print("--limit must be >= 0", file=sys.stderr)
         return 1
 
     scanned = candidates = changed = errors = 0
@@ -41,13 +62,13 @@ def main() -> int:
             break
         scanned += 1
         try:
-            text = html.read_text(encoding="utf-8")
+            text = html.read_text(encoding="utf-8", errors="strict")
             clean = _sanitize_generated_html(text)
             if clean == text:
                 continue
             candidates += 1
             if args.apply:
-                html.write_text(clean, encoding="utf-8")
+                _atomic_write(html, clean)
                 changed += 1
         except Exception as exc:  # noqa: BLE001
             errors += 1
@@ -65,10 +86,33 @@ def main() -> int:
         f"[{mode}] scanned={scanned} candidates={candidates} "
         f"changed={changed} errors={errors}"
     )
-    if not args.apply and candidates:
-        print("No files changed. Re-run with --apply after reviewing the count.")
-    return 0 if errors == 0 else 2
+
+    if errors:
+        print("Refusing successful completion because scan/write errors occurred.", file=sys.stderr)
+        return 2
+
+    if not args.apply:
+        if candidates:
+            print("No files changed. Re-run against an isolated release candidate with --apply after review.")
+        return 0
+
+    target_error = mutation_target_error(
+        args.root,
+        current=args.current,
+        releases_root=args.releases_root,
+        allow_active_current=args.unsafe_allow_active_current,
+    )
+    if target_error:
+        # Important: target must be checked before writes. This branch is kept
+        # only as a defensive assertion and should be unreachable below.
+        print(f"Refusing apply: {target_error}", file=sys.stderr)
+        return 3
+
+    return 0
 
 
 if __name__ == "__main__":
+    # Validate mutation target before entering the scan/write loop when --apply
+    # is present. argparse is intentionally parsed in main, so main performs the
+    # authoritative check before any write (see early guard below).
     raise SystemExit(main())
