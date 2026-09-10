@@ -19,6 +19,7 @@ os.chdir(APP_ROOT)
 
 from app.core.config import settings  # noqa: E402
 from app.services.content_generator import _homepage_cities, _render_city_hub_html, _template_env  # noqa: E402
+from app.services.index_policy import normalize_policy_payload, services_for_city  # noqa: E402
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
@@ -39,7 +40,7 @@ def _valid_sha256(value: object) -> bool:
     return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
-def load_config(path: Path, whitelist: Path) -> tuple[list[str], list[str]]:
+def load_config(path: Path, whitelist: Path) -> dict:
     if not path.is_file():
         raise SystemExit(f"Missing release keep-config: {path}")
     if not whitelist.is_file():
@@ -50,21 +51,20 @@ def load_config(path: Path, whitelist: Path) -> tuple[list[str], list[str]]:
         raise SystemExit(f"Invalid release keep-config: {path}: {exc}") from exc
     if not isinstance(cfg, dict):
         raise SystemExit("release keep-config root must be a JSON object")
+    try:
+        policy = normalize_policy_payload(cfg)
+    except ValueError as exc:
+        raise SystemExit(f"invalid release index policy: {exc}") from exc
 
-    open_cities = list(cfg.get("open_cities") or [])
-    open_services = list(cfg.get("open_services") or [])
-    if not open_cities or not open_services:
-        raise SystemExit("release keep-config contains empty open_cities/open_services")
     if not str(cfg.get("policy_source") or "").strip() or not _valid_sha256(cfg.get("policy_sha256")):
         raise SystemExit("release keep-config has invalid policy provenance")
     if not str(cfg.get("whitelist_source") or "").strip() or not _valid_sha256(cfg.get("whitelist_sha256")):
         raise SystemExit("release keep-config has invalid whitelist provenance")
-
     expected = str(cfg.get("whitelist_sha256")).strip().lower()
     actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
     if actual != expected:
         raise SystemExit(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
-    return open_cities, open_services
+    return policy
 
 
 def whitelist_extras(path: Path) -> dict[str, set[str]]:
@@ -91,11 +91,7 @@ def load_city_map() -> dict[str, SimpleNamespace]:
             slug = (row.get("slug") or "").strip()
             name = (row.get("city") or "").strip()
             if slug and name:
-                mapping[slug] = SimpleNamespace(
-                    slug=slug,
-                    name=name,
-                    region=(row.get("region") or "Россия").strip(),
-                )
+                mapping[slug] = SimpleNamespace(slug=slug, name=name, region=(row.get("region") or "Россия").strip())
     return mapping
 
 
@@ -118,20 +114,22 @@ def build_plan(
     keep_config: Path,
     whitelist: Path,
 ) -> tuple[
-    list[str],
+    dict,
     list[str],
     list[str],
     list[str],
     list[dict],
     list[tuple[SimpleNamespace, list[SimpleNamespace]]],
 ]:
-    open_cities, open_services = load_config(keep_config, whitelist)
+    policy = load_config(keep_config, whitelist)
+    open_cities = list(policy["open_cities"])
     extras = whitelist_extras(whitelist)
     city_map = load_city_map()
     service_map = load_services_map()
 
+    policy_services = sorted({service for city in open_cities for service in services_for_city(policy, city)})
     missing_cities = [slug for slug in open_cities if slug not in city_map]
-    missing_services = [slug for slug in open_services if slug not in service_map]
+    missing_services = [slug for slug in policy_services if slug not in service_map]
     whitelist_service_slugs = sorted({service for values in extras.values() for service in values})
     missing_whitelist_services = [slug for slug in whitelist_service_slugs if slug not in service_map]
 
@@ -143,12 +141,13 @@ def build_plan(
         city = city_map.get(slug)
         if city is None:
             continue
-        slugs_for_city = list(dict.fromkeys(open_services + sorted(extras.get(slug, set()))))
+        allowed = services_for_city(policy, slug)
+        slugs_for_city = list(dict.fromkeys(allowed + sorted(extras.get(slug, set()))))
         services = [service_map[item] for item in slugs_for_city if item in service_map]
         hub_plan.append((city, services))
 
     return (
-        open_cities,
+        policy,
         missing_cities,
         missing_services,
         missing_whitelist_services,
@@ -179,18 +178,18 @@ def main() -> int:
     keep_config = release_root / RELEASE_KEEP_FILENAME
     whitelist = release_root / RELEASE_WHITELIST_FILENAME
 
-    # Content generator hooks read these dynamically when rendering.
     os.environ["XGU_KEEP_CONFIG"] = str(keep_config)
     os.environ["XGU_WHITELIST"] = str(whitelist)
 
     (
-        open_cities,
+        policy,
         missing_cities,
         missing_services,
         missing_whitelist_services,
         cities_for_home,
         hub_plan,
     ) = build_plan(keep_config, whitelist)
+    open_cities = list(policy["open_cities"])
 
     integrity_errors: list[str] = []
     if missing_cities:
@@ -202,10 +201,13 @@ def main() -> int:
     if len(hub_plan) != len(open_cities):
         integrity_errors.append("hub plan does not cover every open city")
 
+    pair_count = len(policy["open_pairs"]) if policy["policy_version"] == 2 else len(open_cities) * len(policy["open_services"])
     print(
-        f"plan: configured_open_cities={len(open_cities)} homepage_cities={len(cities_for_home)} "
-        f"hubs={len(hub_plan)} missing_cities={len(missing_cities)} "
-        f"missing_services={len(missing_services)} missing_whitelist_services={len(missing_whitelist_services)}"
+        f"plan: policy_v={policy['policy_version']} mode={policy['policy_mode']} "
+        f"configured_open_cities={len(open_cities)} explicit/indexable_pairs={pair_count} "
+        f"homepage_cities={len(cities_for_home)} hubs={len(hub_plan)} "
+        f"missing_cities={len(missing_cities)} missing_services={len(missing_services)} "
+        f"missing_whitelist_services={len(missing_whitelist_services)}"
     )
     for error in integrity_errors:
         print(f"  ERROR: {error}", file=sys.stderr)
