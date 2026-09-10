@@ -33,10 +33,11 @@ def mutation_target_error(
 ) -> str | None:
     """Validate a bulk-write target.
 
-    Normal writes must target a direct child of ``releases_root`` and must not
-    be the active ``current`` target. The active target can only be allowed by
-    an explicit emergency override.
+    Normal writes must target a real direct child of ``releases_root`` and must
+    not be the active ``current`` target. Symlink candidates are never accepted.
     """
+    if target.is_symlink():
+        return f"mutation target must not be a symlink: {target}"
     if not target.is_dir():
         return f"mutation target is not a directory: {target}"
 
@@ -61,14 +62,23 @@ def mutation_target_error(
 def release_operation_lock(lock_path: Path = DEFAULT_RELEASE_LOCK) -> Iterator[TextIO]:
     """Acquire the non-blocking host-wide lock for deploy/bootstrap/prune.
 
-    The lock file is intentionally persistent; ``flock`` state belongs to the
-    open file descriptor, not the file's existence. A second process fails
-    immediately instead of waiting and later acting on stale deployment state.
+    ``O_NOFOLLOW`` rejects a symlink lock path before opening it. The lock file
+    itself is persistent; flock ownership belongs to the open descriptor.
     """
     if not lock_path.parent.is_dir():
         raise FileNotFoundError(f"release lock parent does not exist: {lock_path.parent}")
+    if lock_path.parent.is_symlink():
+        raise RuntimeError(f"release lock parent must not be a symlink: {lock_path.parent}")
 
-    handle = lock_path.open("a+", encoding="utf-8")
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    flags |= nofollow
+    try:
+        fd = os.open(lock_path, flags, 0o600)
+    except OSError as exc:
+        raise RuntimeError(f"cannot safely open release lock without following symlinks: {lock_path}: {exc}") from exc
+
+    handle = os.fdopen(fd, "r+", encoding="utf-8")
     try:
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -97,14 +107,14 @@ def atomic_replace_text(
     encoding: str = "utf-8",
     default_mode: int = 0o644,
 ) -> None:
-    """Atomically replace or create one text file.
-
-    Existing permission bits are preserved. New files use ``default_mode``.
-    The parent directory must already exist so callers cannot accidentally
-    create an unexpected directory tree through a typo.
-    """
+    """Atomically replace or create one non-symlink text file."""
     if not path.parent.is_dir():
         raise FileNotFoundError(f"parent directory does not exist: {path.parent}")
+    if path.parent.is_symlink():
+        raise RuntimeError(f"parent directory must not be a symlink: {path.parent}")
+    if path.is_symlink():
+        raise RuntimeError(f"refusing to replace symlink as a regular file: {path}")
+
     mode = (path.stat().st_mode & 0o777) if path.exists() else default_mode
     temp = path.with_name(f".{path.name}.next.{os.getpid()}.{time.time_ns()}")
     try:
