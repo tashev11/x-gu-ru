@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_safety import active_release, atomic_replace_text, mutation_target_error
+from release_safety import (
+    active_release,
+    atomic_replace_text,
+    mutation_target_error,
+    release_operation_lock,
+)
 
 
 class ReleaseSafetyTests(unittest.TestCase):
@@ -88,6 +93,26 @@ class ReleaseSafetyTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 atomic_replace_text(path, "nope")
             self.assertFalse(path.exists())
+
+    def test_release_operation_lock_rejects_second_holder(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            lock = Path(temp) / ".release-operation.lock"
+            with release_operation_lock(lock):
+                with self.assertRaises(RuntimeError):
+                    with release_operation_lock(lock):
+                        self.fail("second release lock holder must never enter")
+
+            # The persistent lock file is reusable once the descriptor lock is released.
+            with release_operation_lock(lock):
+                self.assertTrue(lock.is_file())
+
+    def test_release_operation_lock_does_not_create_missing_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            lock = Path(temp) / "missing" / ".release-operation.lock"
+            with self.assertRaises(FileNotFoundError):
+                with release_operation_lock(lock):
+                    pass
+            self.assertFalse(lock.parent.exists())
 
 
 if __name__ == "__main__":
