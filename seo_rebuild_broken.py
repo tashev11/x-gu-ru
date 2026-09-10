@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Rebuild pages for a reviewed set of broken city directories.
 
-Dry-run by default. Apply must target an isolated release candidate unless an
-explicit emergency override allows active current. The candidate's embedded
-policy and whitelist snapshots are validated before any directory is created.
+Physical pages may be rebuilt for repair purposes, but an indexable city hub
+links only to services allowed by the release policy for that exact city plus
+protected whitelist exceptions.
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 
 APP_ROOT = Path("/opt/p3-app")
@@ -22,6 +23,7 @@ sys.path.insert(0, str(APP_ROOT))
 os.chdir(APP_ROOT)
 
 from app.services.content_generator import _render_city_hub_html, _render_html_landing  # noqa: E402
+from app.services.index_policy import normalize_policy_payload, page_is_open, services_for_city  # noqa: E402
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
@@ -62,11 +64,7 @@ def load_city(slug: str) -> SimpleNamespace | None:
                 name = (row.get("city") or "").strip()
                 if not name:
                     return None
-                return SimpleNamespace(
-                    slug=slug,
-                    name=name,
-                    region=(row.get("region") or "Россия").strip(),
-                )
+                return SimpleNamespace(slug=slug, name=name, region=(row.get("region") or "Россия").strip())
     return None
 
 
@@ -82,7 +80,24 @@ def load_services() -> list[SimpleNamespace]:
     return services
 
 
-def validate_release_contract(root: Path) -> tuple[Path | None, Path | None, list[str]]:
+def whitelist_extras(path: Path) -> dict[str, set[str]]:
+    extras: dict[str, set[str]] = {}
+    for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="strict").splitlines(), start=1):
+        value = line.strip()
+        if not value:
+            continue
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or parsed.netloc != "x-gu.ru" or parsed.query or parsed.fragment:
+            raise ValueError(f"invalid release whitelist URL on line {line_number}: {value}")
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) == 2:
+            extras.setdefault(parts[0], set()).add(parts[1])
+        elif len(parts) > 2:
+            raise ValueError(f"unsupported release whitelist path depth on line {line_number}: {value}")
+    return extras
+
+
+def validate_release_contract(root: Path) -> tuple[Path | None, Path | None, dict | None, list[str]]:
     errors: list[str] = []
     manifest = root.resolve() / MANIFEST_NAME
     whitelist = root.resolve() / WHITELIST_NAME
@@ -91,19 +106,19 @@ def validate_release_contract(root: Path) -> tuple[Path | None, Path | None, lis
     if not whitelist.is_file():
         errors.append(f"release whitelist snapshot missing: {whitelist}")
     if errors:
-        return (manifest if manifest.is_file() else None, whitelist if whitelist.is_file() else None, errors)
+        return (manifest if manifest.is_file() else None, whitelist if whitelist.is_file() else None, None, errors)
 
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        return manifest, whitelist, [f"release policy manifest is invalid JSON: {exc}"]
+        return manifest, whitelist, None, [f"release policy manifest is invalid JSON: {exc}"]
     if not isinstance(payload, dict):
-        return manifest, whitelist, ["release policy manifest root must be a JSON object"]
+        return manifest, whitelist, None, ["release policy manifest root must be a JSON object"]
+    try:
+        policy = normalize_policy_payload(payload)
+    except ValueError as exc:
+        return manifest, whitelist, None, [f"release index policy is invalid: {exc}"]
 
-    if not payload.get("open_cities"):
-        errors.append("release policy manifest has no open_cities")
-    if not payload.get("open_services"):
-        errors.append("release policy manifest has no open_services")
     if not str(payload.get("policy_source") or "").strip() or not _valid_sha256(payload.get("policy_sha256")):
         errors.append("release policy manifest has invalid policy provenance")
     if not str(payload.get("whitelist_source") or "").strip() or not _valid_sha256(payload.get("whitelist_sha256")):
@@ -114,7 +129,7 @@ def validate_release_contract(root: Path) -> tuple[Path | None, Path | None, lis
         actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
         if actual != expected:
             errors.append(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
-    return manifest, whitelist, errors
+    return manifest, whitelist, policy, errors
 
 
 def main() -> int:
@@ -128,12 +143,7 @@ def main() -> int:
         action="store_true",
         help="emergency override allowing writes directly to active current",
     )
-    parser.add_argument(
-        "--slug",
-        action="append",
-        default=[],
-        help="limit to a reviewed broken city slug; may be supplied multiple times",
-    )
+    parser.add_argument("--slug", action="append", default=[], help="reviewed broken city slug; may be repeated")
     args = parser.parse_args()
 
     if not args.root.is_dir():
@@ -146,17 +156,14 @@ def main() -> int:
     requested = set(args.slug) if args.slug else set(BROKEN_CITY_SLUGS)
     unknown = requested - BROKEN_CITY_SLUGS
     if unknown:
-        print(
-            "Refusing slugs outside the reviewed BROKEN_CITY_SLUGS set: "
-            + ", ".join(sorted(unknown)),
-            file=sys.stderr,
-        )
+        print("Refusing slugs outside reviewed set: " + ", ".join(sorted(unknown)), file=sys.stderr)
         return 2
 
     services = load_services()
     if not services:
         print("Keyword CSV produced zero renderable services; refusing rebuild.", file=sys.stderr)
         return 2
+    services_by_slug = {service.slug: service for service in services}
 
     plan: list[tuple[str, SimpleNamespace]] = []
     missing_cities: list[str] = []
@@ -166,33 +173,46 @@ def main() -> int:
             missing_cities.append(slug)
         else:
             plan.append((slug, city))
-
     if missing_cities:
-        print(
-            "Reviewed broken city slug(s) missing/invalid in city CSV: "
-            + ", ".join(missing_cities),
-            file=sys.stderr,
-        )
+        print("Reviewed broken city slug(s) missing/invalid in city CSV: " + ", ".join(missing_cities), file=sys.stderr)
         return 2
     if not plan:
         print("Rebuild plan is empty; refusing no-op apply.", file=sys.stderr)
         return 2
 
-    manifest, whitelist, contract_errors = validate_release_contract(args.root)
+    manifest, whitelist, policy, contract_errors = validate_release_contract(args.root)
     if contract_errors:
         for error in contract_errors:
             print(f"  ERROR: {error}", file=sys.stderr)
         print("Refusing rebuild without a valid self-contained release contract.", file=sys.stderr)
         return 3
-    assert manifest is not None and whitelist is not None
+    assert manifest is not None and whitelist is not None and policy is not None
+
+    try:
+        extras = whitelist_extras(whitelist)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+
+    required_hub_services = {
+        service_slug
+        for slug, _city in plan
+        for service_slug in (services_for_city(policy, slug) + sorted(extras.get(slug, set())))
+    }
+    missing_required_services = sorted(required_hub_services - set(services_by_slug))
+    if missing_required_services:
+        print("Policy/whitelist service(s) missing from keyword CSV: " + ", ".join(missing_required_services), file=sys.stderr)
+        return 3
 
     pages_per_city = 1 + len(services)
     print(
-        f"plan: cities={len(plan)} services={len(services)} "
-        f"pages_per_city={pages_per_city} total_pages={len(plan) * pages_per_city}"
+        f"plan: policy_v={policy['policy_version']} mode={policy['policy_mode']} cities={len(plan)} "
+        f"physical_services={len(services)} pages_per_city={pages_per_city} total_pages={len(plan) * pages_per_city}"
     )
     for slug, city in plan:
-        print(f"  {slug}: {city.name} -> {args.root / slug}")
+        hub_links = services_for_city(policy, slug) if page_is_open(policy, slug) else []
+        hub_links = list(dict.fromkeys(hub_links + sorted(extras.get(slug, set()))))
+        print(f"  {slug}: {city.name} -> {args.root / slug} | open_hub_links={len(hub_links)}")
 
     if not args.apply:
         print("[DRY-RUN] No files changed. Re-run against this release candidate with --apply after review.")
@@ -219,7 +239,12 @@ def main() -> int:
             city_dir.mkdir(parents=True, exist_ok=True)
             os.chmod(city_dir, 0o755)
 
-            hub_html = _render_city_hub_html(city, services)
+            if page_is_open(policy, slug):
+                hub_slugs = list(dict.fromkeys(services_for_city(policy, slug) + sorted(extras.get(slug, set()))))
+                hub_services = [services_by_slug[item] for item in hub_slugs]
+            else:
+                hub_services = services
+            hub_html = _render_city_hub_html(city, hub_services)
             atomic_replace_text(city_dir / "index.html", hub_html)
             built = 1
 
@@ -232,7 +257,7 @@ def main() -> int:
                 built += 1
 
             total_built += built
-            print(f"  {slug}: built {built} pages")
+            print(f"  {slug}: built {built} physical pages")
     except Exception as exc:  # noqa: BLE001
         print(
             f"Rebuild failed after partial candidate writes: {exc}. Discard/rebuild this release candidate.",
@@ -240,10 +265,7 @@ def main() -> int:
         )
         return 4
 
-    print(
-        f"[APPLIED] total_pages_built={total_built} "
-        f"policy_manifest={manifest} whitelist_snapshot={whitelist}"
-    )
+    print(f"[APPLIED] total_pages_built={total_built} policy_manifest={manifest} whitelist_snapshot={whitelist}")
     return 0
 
 
