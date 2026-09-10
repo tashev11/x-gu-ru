@@ -14,7 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from release_integrity import RELEASE_METADATA_FILENAME, verify_release_metadata  # noqa: E402
+from index_policy import normalize_policy_payload, policy_digest  # noqa: E402
+from release_integrity import verify_release_metadata  # noqa: E402
 from seo_healthcheck import evaluate, run_audit  # noqa: E402
 
 
@@ -106,10 +107,13 @@ def validate_policy_files(
     if not isinstance(payload, dict):
         errors.append("index keep-config root must be a JSON object")
         return errors
-    if not payload.get("open_cities"):
-        errors.append("index keep-config has no open_cities")
-    if not payload.get("open_services"):
-        errors.append("index keep-config has no open_services")
+
+    try:
+        policy = normalize_policy_payload(payload)
+    except ValueError as exc:
+        errors.append(f"index keep-config policy is invalid: {exc}")
+        policy = None
+
     for key in REQUIRED_POLICY_METADATA:
         if not str(payload.get(key) or "").strip():
             errors.append(f"index keep-config has no {key}")
@@ -118,6 +122,14 @@ def validate_policy_files(
         errors.append("index keep-config policy_sha256 is not a valid SHA-256 hex digest")
     if payload.get("whitelist_sha256") and not _valid_sha256(payload.get("whitelist_sha256")):
         errors.append("index keep-config whitelist_sha256 is not a valid SHA-256 hex digest")
+
+    if policy is not None and _valid_sha256(payload.get("policy_sha256")):
+        expected_policy = str(payload.get("policy_sha256")).strip().lower()
+        actual_policy = policy_digest(policy)
+        if actual_policy != expected_policy:
+            errors.append(
+                f"release policy SHA-256 mismatch: manifest={expected_policy} actual={actual_policy}"
+            )
 
     if whitelist.is_file() and _valid_sha256(payload.get("whitelist_sha256")):
         actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
@@ -146,9 +158,6 @@ def run_predeploy(
     if errors:
         return False, errors, None
 
-    # Finalization is the boundary after which a release is immutable. Verify
-    # the full-file fingerprint before doing the semantic SEO audit so a late
-    # mutation can never be deployed merely because its HTML still looks valid.
     metadata, integrity_errors = verify_release_metadata(release_root)
     if integrity_errors:
         return False, integrity_errors, None
@@ -207,6 +216,7 @@ def main() -> int:
     print("Pre-deploy check: OK")
     print(f"  pages={stats['pages_total']}")
     print(f"  sitemap_urls={audit['sitemap_urls']}")
+    print(f"  policy_version={audit.get('policy_version')} mode={audit.get('policy_mode')}")
     print(f"  policy_checked_pages={stats['policy_checked_pages']}")
     print(f"  noindex_total={stats['has_noindex']}")
     print(f"  tooling_revision={metadata['tooling_revision']}")
