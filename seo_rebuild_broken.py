@@ -2,13 +2,14 @@
 """Rebuild pages for a reviewed set of broken city directories.
 
 Dry-run by default. Apply must target an isolated release candidate unless an
-explicit emergency override allows active current. Missing city/service/policy
-input is a hard error before any directory or file is created.
+explicit emergency override allows active current. The candidate's embedded
+policy and whitelist snapshots are validated before any directory is created.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import sys
@@ -32,8 +33,8 @@ from release_safety import (  # noqa: E402
 PUBLIC_ROOT = DEFAULT_CURRENT
 KEYWORDS_CSV = APP_ROOT / "data/keywords_all.csv"
 CITIES_CSV = APP_ROOT / "data/ru_cities_with_population.csv"
-WHITELIST = APP_ROOT / "data/whitelist.txt"
 MANIFEST_NAME = ".xgu-index-keep.json"
+WHITELIST_NAME = ".xgu-whitelist.txt"
 
 BROKEN_CITY_SLUGS = {
     "tula",
@@ -47,6 +48,11 @@ BROKEN_CITY_SLUGS = {
     "tiumen",
     "tobolsk",
 }
+
+
+def _valid_sha256(value: object) -> bool:
+    digest = str(value or "").strip().lower()
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
 def load_city(slug: str) -> SimpleNamespace | None:
@@ -76,34 +82,39 @@ def load_services() -> list[SimpleNamespace]:
     return services
 
 
-def validate_release_policy(root: Path) -> tuple[Path | None, list[str]]:
+def validate_release_contract(root: Path) -> tuple[Path | None, Path | None, list[str]]:
     errors: list[str] = []
-    manifest = root / MANIFEST_NAME
+    manifest = root.resolve() / MANIFEST_NAME
+    whitelist = root.resolve() / WHITELIST_NAME
     if not manifest.is_file():
         errors.append(f"release policy manifest missing: {manifest}")
-        return None, errors
-    if not WHITELIST.is_file():
-        errors.append(f"required whitelist missing: {WHITELIST}")
+    if not whitelist.is_file():
+        errors.append(f"release whitelist snapshot missing: {whitelist}")
+    if errors:
+        return (manifest if manifest.is_file() else None, whitelist if whitelist.is_file() else None, errors)
 
     try:
         payload = json.loads(manifest.read_text(encoding="utf-8", errors="strict"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        errors.append(f"release policy manifest is invalid JSON: {exc}")
-        return manifest, errors
-
+        return manifest, whitelist, [f"release policy manifest is invalid JSON: {exc}"]
     if not isinstance(payload, dict):
-        errors.append("release policy manifest root must be a JSON object")
-        return manifest, errors
+        return manifest, whitelist, ["release policy manifest root must be a JSON object"]
+
     if not payload.get("open_cities"):
         errors.append("release policy manifest has no open_cities")
     if not payload.get("open_services"):
         errors.append("release policy manifest has no open_services")
-    if not str(payload.get("policy_source") or "").strip():
-        errors.append("release policy manifest has no policy_source")
-    digest = str(payload.get("policy_sha256") or "").strip().lower()
-    if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
-        errors.append("release policy manifest policy_sha256 is not a valid SHA-256 digest")
-    return manifest, errors
+    if not str(payload.get("policy_source") or "").strip() or not _valid_sha256(payload.get("policy_sha256")):
+        errors.append("release policy manifest has invalid policy provenance")
+    if not str(payload.get("whitelist_source") or "").strip() or not _valid_sha256(payload.get("whitelist_sha256")):
+        errors.append("release policy manifest has invalid whitelist provenance")
+
+    if whitelist.is_file() and _valid_sha256(payload.get("whitelist_sha256")):
+        expected = str(payload.get("whitelist_sha256")).strip().lower()
+        actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
+        if actual != expected:
+            errors.append(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
+    return manifest, whitelist, errors
 
 
 def main() -> int:
@@ -167,6 +178,14 @@ def main() -> int:
         print("Rebuild plan is empty; refusing no-op apply.", file=sys.stderr)
         return 2
 
+    manifest, whitelist, contract_errors = validate_release_contract(args.root)
+    if contract_errors:
+        for error in contract_errors:
+            print(f"  ERROR: {error}", file=sys.stderr)
+        print("Refusing rebuild without a valid self-contained release contract.", file=sys.stderr)
+        return 3
+    assert manifest is not None and whitelist is not None
+
     pages_per_city = 1 + len(services)
     print(
         f"plan: cities={len(plan)} services={len(services)} "
@@ -176,7 +195,7 @@ def main() -> int:
         print(f"  {slug}: {city.name} -> {args.root / slug}")
 
     if not args.apply:
-        print("[DRY-RUN] No files changed. Re-run against an isolated release candidate with --apply after review.")
+        print("[DRY-RUN] No files changed. Re-run against this release candidate with --apply after review.")
         return 0
 
     target_error = mutation_target_error(
@@ -189,19 +208,8 @@ def main() -> int:
         print(f"Refusing apply before directory/file writes: {target_error}", file=sys.stderr)
         return 3
 
-    manifest, policy_errors = validate_release_policy(args.root)
-    if policy_errors:
-        for error in policy_errors:
-            print(f"  ERROR: {error}", file=sys.stderr)
-        print("Refusing rebuild without the release candidate's reviewed policy manifest.", file=sys.stderr)
-        return 3
-    assert manifest is not None
-
-    # Rendering must use the candidate's policy, never the currently active
-    # release's manifest. This keeps robots/indexability consistent with the
-    # release that will later be validated and atomically switched live.
-    os.environ["XGU_KEEP_CONFIG"] = str(manifest.resolve())
-    os.environ["XGU_WHITELIST"] = str(WHITELIST.resolve())
+    os.environ["XGU_KEEP_CONFIG"] = str(manifest)
+    os.environ["XGU_WHITELIST"] = str(whitelist)
 
     site = SimpleNamespace(id=1)
     total_built = 0
@@ -232,7 +240,10 @@ def main() -> int:
         )
         return 4
 
-    print(f"[APPLIED] total_pages_built={total_built} policy_manifest={manifest}")
+    print(
+        f"[APPLIED] total_pages_built={total_built} "
+        f"policy_manifest={manifest} whitelist_snapshot={whitelist}"
+    )
     return 0
 
 
