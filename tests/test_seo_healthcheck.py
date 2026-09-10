@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from seo_healthcheck import RELEASE_KEEP_FILENAME, run_audit
+from seo_healthcheck import (
+    RELEASE_KEEP_FILENAME,
+    RELEASE_WHITELIST_FILENAME,
+    evaluate,
+    run_audit,
+)
 
 
 BASE = "https://example.test"
@@ -62,6 +68,26 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         whitelist.write_text("", encoding="utf-8")
         return root, policy, whitelist, temp
 
+    def _install_release_contract(self, root: Path) -> tuple[Path, Path]:
+        whitelist = root / RELEASE_WHITELIST_FILENAME
+        whitelist_text = ""
+        whitelist.write_text(whitelist_text, encoding="utf-8")
+        manifest = root / RELEASE_KEEP_FILENAME
+        manifest.write_text(
+            json.dumps(
+                {
+                    "open_cities": ["moskva"],
+                    "open_services": ["seo-audit-saita"],
+                    "policy_source": "/reviewed/index_policy.json",
+                    "policy_sha256": "a" * 64,
+                    "whitelist_source": "/reviewed/whitelist.txt",
+                    "whitelist_sha256": hashlib.sha256(whitelist_text.encode("utf-8")).hexdigest(),
+                }
+            ),
+            encoding="utf-8",
+        )
+        return manifest, whitelist
+
     def test_expected_open_and_closed_pages_are_clean(self) -> None:
         root, policy, whitelist, temp = self._fixture()
         self.addCleanup(temp.cleanup)
@@ -78,14 +104,35 @@ class SeoHealthcheckPolicyTests(unittest.TestCase):
         self.assertEqual(stats["bad_sitemap_urls"], 0)
         self.assertEqual(stats["sitemap_orphan_urls"], 0)
 
-    def test_release_manifest_is_default_policy_for_release_root(self) -> None:
-        root, policy, whitelist, temp = self._fixture()
+    def test_release_contract_is_default_for_release_root(self) -> None:
+        root, _policy, _whitelist, temp = self._fixture()
         self.addCleanup(temp.cleanup)
-        manifest = root / RELEASE_KEEP_FILENAME
-        manifest.write_text(policy.read_text(encoding="utf-8"), encoding="utf-8")
-        audit = run_audit(root, base_url=BASE, whitelist=whitelist)
+        manifest, whitelist = self._install_release_contract(root)
+        audit = run_audit(root, base_url=BASE)
         self.assertEqual(Path(audit["keep_config"]), manifest)
-        self.assertTrue(audit["policy_loaded"])
+        self.assertEqual(Path(audit["whitelist"]), whitelist)
+        self.assertTrue(audit["policy_loaded"], audit.get("policy_error"))
+
+    def test_release_whitelist_hash_mismatch_fails_policy_load(self) -> None:
+        root, _policy, _whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        _manifest, whitelist = self._install_release_contract(root)
+        whitelist.write_text(f"{BASE}/moskva/\n", encoding="utf-8")
+        audit = run_audit(root, base_url=BASE)
+        self.assertFalse(audit["policy_loaded"])
+        self.assertIn("SHA-256 mismatch", audit["policy_error"])
+        ok, breaches = evaluate(audit)
+        self.assertFalse(ok)
+        self.assertTrue(any("policy_not_loaded" in item for item in breaches))
+
+    def test_missing_release_policy_fails_evaluation_by_default(self) -> None:
+        root, _policy, _whitelist, temp = self._fixture()
+        self.addCleanup(temp.cleanup)
+        audit = run_audit(root, base_url=BASE)
+        self.assertFalse(audit["policy_loaded"])
+        ok, breaches = evaluate(audit)
+        self.assertFalse(ok)
+        self.assertTrue(any("policy_not_loaded" in item for item in breaches))
 
     def test_detects_robots_and_sitemap_inversions(self) -> None:
         root, policy, whitelist, temp = self._fixture()
