@@ -2,11 +2,9 @@
 """Manage the indexable core of x-gu.ru.
 
 Safe by default: the command only builds and prints a plan. Real changes to
-robots meta, sitemap and keep-config require ``--apply``.
-
-Normal operation requires a reviewed JSON policy file. The historical baseline
-is stored as versioned data in ``index_policy.baseline.json`` and is available
-only via the explicit ``--use-builtin-policy`` emergency flag.
+robots meta, sitemap and keep-config require ``--apply``. Apply is intended for
+an isolated release candidate; mutating the active ``current`` target requires
+an explicit emergency override.
 """
 from __future__ import annotations
 
@@ -23,6 +21,8 @@ from urllib.parse import unquote, urlparse
 
 
 DEFAULT_WEB_ROOT = Path("/var/www/x-gu.ru/current")
+DEFAULT_CURRENT = Path("/var/www/x-gu.ru/current")
+DEFAULT_RELEASES_ROOT = Path("/var/www/x-gu.ru/releases")
 DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
 DEFAULT_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
 DEFAULT_POLICY = Path(os.getenv("XGU_INDEX_POLICY", "/opt/p3-app/data/index_policy.json"))
@@ -115,8 +115,8 @@ def _canonical_whitelist_url(value: str) -> str:
         raise SystemExit(f"Whitelist URL must not contain query/fragment: {value}")
 
     decoded_parts = [unquote(part) for part in parsed.path.split("/") if part]
-    if any(part in {".", ".."} for part in decoded_parts):
-        raise SystemExit(f"Whitelist URL contains path traversal segment: {value}")
+    if any(part in {".", ".."} or "/" in part or "\\" in part for part in decoded_parts):
+        raise SystemExit(f"Whitelist URL contains unsafe path segment: {value}")
 
     path = parsed.path or "/"
     if not path.startswith("/"):
@@ -124,6 +124,34 @@ def _canonical_whitelist_url(value: str) -> str:
     if path != "/" and not path.endswith("/"):
         path += "/"
     return BASE + path
+
+
+def _apply_target_error(
+    web_root: Path,
+    *,
+    current: Path,
+    releases_root: Path,
+    allow_active_current: bool,
+) -> str | None:
+    root = web_root.resolve()
+    releases = releases_root.resolve()
+    active: Path | None = None
+    if current.exists() or current.is_symlink():
+        try:
+            active = current.resolve(strict=True)
+        except OSError:
+            active = None
+
+    if active is not None and root == active:
+        if allow_active_current:
+            return None
+        return (
+            "refusing to mutate the active current release; build/copy an isolated release candidate "
+            "and pass it via --web-root. Use --unsafe-allow-active-current only for emergency recovery."
+        )
+    if root.parent != releases:
+        return f"apply target must be a direct child of releases root: target={root} releases_root={releases}"
+    return None
 
 
 def url_for(html: Path, web_root: Path) -> str:
@@ -298,6 +326,13 @@ def main() -> int:
         help="explicit emergency fallback to the bundled historical baseline",
     )
     parser.add_argument("--web-root", type=Path, default=DEFAULT_WEB_ROOT)
+    parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
+    parser.add_argument(
+        "--unsafe-allow-active-current",
+        action="store_true",
+        help="emergency override allowing --apply directly against the active current target",
+    )
     parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
     parser.add_argument("--keep-config", type=Path, default=DEFAULT_KEEP_CONFIG)
     args = parser.parse_args()
@@ -330,16 +365,27 @@ def main() -> int:
         return 2
 
     if not args.apply:
-        print("[DRY-RUN] No files changed. Re-run with --apply after reviewing the plan.")
+        print("[DRY-RUN] No files changed. Re-run with --apply against an isolated release candidate.")
         return 0
+
+    target_error = _apply_target_error(
+        args.web_root,
+        current=args.current,
+        releases_root=args.releases_root,
+        allow_active_current=args.unsafe_allow_active_current,
+    )
+    if target_error:
+        print(f"Refusing apply: {target_error}", file=sys.stderr)
+        return 3
 
     changed, apply_errors = apply_page_plan(operations)
     if apply_errors:
         print(
-            f"Page application had {apply_errors} errors; sitemap/keep-config were NOT rewritten.",
+            f"Page application had {apply_errors} errors; sitemap/keep-config were NOT rewritten. "
+            "Discard this release candidate and rebuild it before deployment.",
             file=sys.stderr,
         )
-        return 3
+        return 4
 
     write_keep_config(
         args.keep_config,
