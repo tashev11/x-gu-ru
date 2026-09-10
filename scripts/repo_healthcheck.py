@@ -50,6 +50,13 @@ RELEASE_FIRST_MUTATORS = (
     "server-opt/sanitize_generated_proof.py",
 )
 
+BACKEND_GENERATOR_CONSUMERS = (
+    "seo_rebuild_broken.py",
+    "server-opt/rerender_hubs_home.py",
+    "server-opt/rerender_open_hubs.py",
+    "server-opt/sanitize_generated_proof.py",
+)
+
 TEST_FILES = (
     "tests/test_city_morphology.py",
     "tests/test_seo_healthcheck.py",
@@ -270,6 +277,21 @@ def check_write_safety(failures: list[str]) -> None:
             failures,
         )
 
+    for rel_path in BACKEND_GENERATOR_CONSUMERS:
+        text = read_text(rel_path, failures)
+        if not text:
+            continue
+        require(
+            "from app.services.content_generator import" in text,
+            f"{rel_path}: does not import the generator from its installed app.services location",
+            failures,
+        )
+        require(
+            "from content_generator import" not in text,
+            f"{rel_path}: can accidentally import a stale top-level content_generator",
+            failures,
+        )
+
     rebuild = read_text("seo_rebuild_broken.py", failures)
     open_hubs = read_text("server-opt/rerender_open_hubs.py", failures)
     all_hubs = read_text("server-opt/rerender_hubs_home.py", failures)
@@ -280,10 +302,16 @@ def check_write_safety(failures: list[str]) -> None:
         require("XGU_WHITELIST" in text, f"{label}: renderer is not bound to candidate whitelist", failures)
         require("whitelist SHA-256 mismatch" in text, f"{label}: whitelist integrity is not verified", failures)
 
-    require("cities_for_home" in all_hubs and "open_cities" in all_hubs,
-            "full hub rerender can repopulate homepage with closed cities", failures)
-    require("allowed_slugs" in all_hubs and "open_services" in all_hubs,
-            "full hub rerender does not constrain open-hub services by policy", failures)
+    require(
+        "cities_for_home" in all_hubs and "open_cities" in all_hubs,
+        "full hub rerender can repopulate homepage with closed cities",
+        failures,
+    )
+    require(
+        "allowed_slugs" in all_hubs and "open_services" in all_hubs,
+        "full hub rerender does not constrain open-hub services by policy",
+        failures,
+    )
 
 
 def check_release_ops(failures: list[str]) -> None:
@@ -372,8 +400,11 @@ def check_purge_safety(failures: list[str]) -> None:
         ),
         failures,
     )
-    require(purge.count("mutation_target_error(") >= 2,
-            "purge does not re-check release activity before each destructive delete", failures)
+    require(
+        purge.count("mutation_target_error(") >= 2,
+        "purge does not re-check release activity before each destructive delete",
+        failures,
+    )
 
 
 def check_ci_and_tests(failures: list[str]) -> None:
@@ -452,6 +483,7 @@ def main() -> int:
     print("  templates synchronized and canonical")
     print("  generator policy + whitelist follow the active release")
     print("  legacy global policy/whitelist require explicit migration flags")
+    print("  backend maintenance imports the installed app.services generator")
     print("  shared city morphology is enforced")
     print("  SEO healthcheck is fail-closed and release-contract aware")
     print("  strict predeploy verifies embedded policy + whitelist integrity")
