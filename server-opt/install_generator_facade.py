@@ -20,6 +20,7 @@ REQUIRED_FILES = (
     "content_generator.py",
     "_content_generator_legacy.py",
     "city_morphology.py",
+    "index_policy.py",
 )
 
 
