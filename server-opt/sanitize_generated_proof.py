@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 from pathlib import Path
 
 
@@ -21,18 +20,12 @@ sys.path.insert(0, str(APP_ROOT))
 os.chdir(APP_ROOT)
 
 from content_generator import _sanitize_generated_html  # noqa: E402
-from release_safety import DEFAULT_CURRENT, DEFAULT_RELEASES_ROOT, mutation_target_error  # noqa: E402
-
-
-def _atomic_write(path: Path, text: str) -> None:
-    temp = path.with_name(f".{path.name}.next.{os.getpid()}.{time.time_ns()}")
-    try:
-        temp.write_text(text, encoding="utf-8")
-        os.chmod(temp, path.stat().st_mode & 0o777)
-        os.replace(temp, path)
-    finally:
-        if temp.exists():
-            temp.unlink()
+from release_safety import (  # noqa: E402
+    DEFAULT_CURRENT,
+    DEFAULT_RELEASES_ROOT,
+    atomic_replace_text,
+    mutation_target_error,
+)
 
 
 def main() -> int:
@@ -79,7 +72,7 @@ def main() -> int:
                 continue
             candidates += 1
             if args.apply:
-                _atomic_write(html, clean)
+                atomic_replace_text(html, clean)
                 changed += 1
         except Exception as exc:  # noqa: BLE001
             errors += 1
