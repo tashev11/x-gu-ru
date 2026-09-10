@@ -96,8 +96,11 @@ def _simhash64(text: str, shingle_size: int = 4) -> int:
 
 
 def _near_duplicate_groups(hashes: dict[str, int], max_distance: int) -> list[list[str]]:
-    if max_distance < 0 or max_distance > 16:
-        raise ValueError("max_distance must be between 0 and 16")
+    # Eight 8-bit bands guarantee that any pair with Hamming distance <= 7
+    # shares at least one unchanged band (pigeonhole principle). We therefore
+    # cannot silently miss a pair that is inside the supported threshold.
+    if max_distance < 0 or max_distance > 7:
+        raise ValueError("max_distance must be between 0 and 7")
 
     parent = {url: url for url in hashes}
 
@@ -112,14 +115,12 @@ def _near_duplicate_groups(hashes: dict[str, int], max_distance: int) -> list[li
         if a != b:
             parent[b] = a
 
-    # Four 16-bit bands keep candidate generation practical for thousands of
-    # pages. We still compute the full Hamming distance before grouping.
     buckets: dict[tuple[int, int], list[str]] = defaultdict(list)
     compared: set[tuple[str, str]] = set()
     for url, value in hashes.items():
         candidates: set[str] = set()
-        for band in range(4):
-            key = (band, (value >> (band * 16)) & 0xFFFF)
+        for band in range(8):
+            key = (band, (value >> (band * 8)) & 0xFF)
             candidates.update(buckets[key])
         for other in candidates:
             pair = (other, url) if other < url else (url, other)
@@ -128,8 +129,8 @@ def _near_duplicate_groups(hashes: dict[str, int], max_distance: int) -> list[li
             compared.add(pair)
             if (value ^ hashes[other]).bit_count() <= max_distance:
                 union(url, other)
-        for band in range(4):
-            key = (band, (value >> (band * 16)) & 0xFFFF)
+        for band in range(8):
+            key = (band, (value >> (band * 8)) & 0xFF)
             buckets[key].append(url)
 
     groups: dict[str, list[str]] = defaultdict(list)
