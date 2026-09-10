@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Atomically switch x-gu.ru to a validated release directory.
+"""Validate and atomically switch x-gu.ru to a release directory.
 
-The command is dry-run by default. ``--apply`` is required to replace the
-``current`` symlink. Production releases must be direct children of the
-configured releases root; this prevents accidentally switching production to
-an arbitrary working/tmp directory.
+Dry-run by default. A production release must be a direct child of the releases
+root, contain its own index-policy manifest, pass structural validation and pass
+the strict offline pre-deploy SEO/policy gate before ``current`` is switched.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -17,8 +17,19 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+SERVER_OPT = Path(__file__).resolve().parent
+REPO_ROOT = SERVER_OPT.parent
+for path in (str(SERVER_OPT), str(REPO_ROOT)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+from predeploy_check import run_predeploy  # noqa: E402
+
+
 DEFAULT_RELEASES_ROOT = Path("/var/www/x-gu.ru/releases")
 DEFAULT_CURRENT = Path("/var/www/x-gu.ru/current")
+DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
+KEEP_FILENAME = ".xgu-index-keep.json"
 CANONICAL_HOST = "x-gu.ru"
 
 
@@ -27,6 +38,7 @@ def _required_paths(release: Path) -> list[Path]:
         release / "index.html",
         release / "robots.txt",
         release / "sitemap.xml",
+        release / KEEP_FILENAME,
     ]
 
 
@@ -34,9 +46,7 @@ def _validate_release_location(release: Path, releases_root: Path) -> list[str]:
     release_resolved = release.resolve()
     root_resolved = releases_root.resolve()
     if release_resolved.parent != root_resolved:
-        return [
-            f"release must be a direct child of releases root: release={release_resolved} root={root_resolved}"
-        ]
+        return [f"release must be a direct child of releases root: release={release_resolved} root={root_resolved}"]
     if release_resolved == root_resolved:
         return ["releases root itself cannot be deployed as a release"]
     return []
@@ -47,7 +57,6 @@ def _local_name(tag: str) -> str:
 
 
 def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
-    """Verify that a sitemap index references existing local shard files."""
     errors: list[str] = []
     try:
         root = ET.fromstring(sitemap.read_text(encoding="utf-8", errors="strict"))
@@ -60,14 +69,18 @@ def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
     if root_name != "sitemapindex":
         return ["sitemap.xml root must be sitemapindex or urlset"]
 
-    locs = [node.text.strip() for node in root.iter() if _local_name(node.tag) == "loc" and node.text and node.text.strip()]
+    locs = [
+        node.text.strip()
+        for node in root.iter()
+        if _local_name(node.tag) == "loc" and node.text and node.text.strip()
+    ]
     if not locs:
         return ["sitemap index contains no shard locations"]
 
     for loc in locs:
         parsed = urlparse(loc)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            errors.append(f"sitemap shard loc must be an absolute URL: {loc}")
+        if parsed.scheme != "https" or not parsed.netloc:
+            errors.append(f"sitemap shard loc must be canonical HTTPS: {loc}")
             continue
         if parsed.hostname != CANONICAL_HOST:
             errors.append(f"sitemap shard loc uses non-canonical host: {loc}")
@@ -83,6 +96,29 @@ def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
             errors.append(f"referenced sitemap shard missing: {rel}")
         elif shard.stat().st_size == 0:
             errors.append(f"referenced sitemap shard is empty: {rel}")
+    return errors
+
+
+def _validate_keep_manifest(path: Path) -> list[str]:
+    if not path.is_file():
+        return [f"required release file missing: {KEEP_FILENAME}"]
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return [f"{KEEP_FILENAME} is invalid JSON: {exc}"]
+    if not isinstance(payload, dict):
+        return [f"{KEEP_FILENAME} root must be a JSON object"]
+
+    errors: list[str] = []
+    if not payload.get("open_cities"):
+        errors.append(f"{KEEP_FILENAME} has no open_cities")
+    if not payload.get("open_services"):
+        errors.append(f"{KEEP_FILENAME} has no open_services")
+    if not str(payload.get("policy_source") or "").strip():
+        errors.append(f"{KEEP_FILENAME} has no policy_source")
+    digest = str(payload.get("policy_sha256") or "").strip().lower()
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        errors.append(f"{KEEP_FILENAME} has invalid policy_sha256")
     return errors
 
 
@@ -112,20 +148,20 @@ def validate_release(release: Path, *, releases_root: Path | None = None) -> lis
     if sitemap.is_file() and sitemap.stat().st_size > 0:
         errors.extend(_validate_sitemap_index(release, sitemap))
 
-    return errors
+    keep_manifest = release / KEEP_FILENAME
+    if keep_manifest.is_file():
+        errors.extend(_validate_keep_manifest(keep_manifest))
+
+    return list(dict.fromkeys(errors))
 
 
 def _current_target(current: Path) -> Path | None:
     if not current.exists() and not current.is_symlink():
         return None
     if not current.is_symlink():
-        raise RuntimeError(
-            f"{current} is not a symlink; refusing to replace a real directory/file atomically"
-        )
+        raise RuntimeError(f"{current} is not a symlink; refusing to replace a real directory/file atomically")
     raw = Path(os.readlink(current))
-    if raw.is_absolute():
-        return raw.resolve()
-    return (current.parent / raw).resolve()
+    return raw.resolve() if raw.is_absolute() else (current.parent / raw).resolve()
 
 
 def switch_release(current: Path, release: Path, *, releases_root: Path | None = None) -> Path | None:
@@ -136,7 +172,6 @@ def switch_release(current: Path, release: Path, *, releases_root: Path | None =
 
     previous = _current_target(current)
     current.parent.mkdir(parents=True, exist_ok=True)
-
     temp_link = current.parent / f".{current.name}.next.{os.getpid()}.{time.time_ns()}"
     try:
         os.symlink(str(release.resolve()), temp_link)
@@ -150,17 +185,14 @@ def switch_release(current: Path, release: Path, *, releases_root: Path | None =
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("release_dir", type=Path, help="fully built release directory")
+    parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
+    parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
+    parser.add_argument("--base-url", default="https://x-gu.ru")
     parser.add_argument(
-        "--releases-root",
-        type=Path,
-        default=DEFAULT_RELEASES_ROOT,
-        help="directory whose direct children are valid production releases",
-    )
-    parser.add_argument(
-        "--current",
-        type=Path,
-        default=DEFAULT_CURRENT,
-        help="current release symlink",
+        "--unsafe-skip-predeploy",
+        action="store_true",
+        help="emergency-only override: skip strict SEO/policy predeploy gate",
     )
     parser.add_argument("--apply", action="store_true", help="atomically switch current to release_dir")
     args = parser.parse_args()
@@ -176,11 +208,27 @@ def main() -> int:
             print(f"  - {error}", file=sys.stderr)
         return 2
 
+    if not args.unsafe_skip_predeploy:
+        ok, gate_errors, _audit = run_predeploy(
+            release,
+            keep_config=release / KEEP_FILENAME,
+            whitelist=args.whitelist.resolve(),
+            base_url=args.base_url,
+        )
+        if not ok:
+            print("Strict pre-deploy gate: FAIL", file=sys.stderr)
+            for error in gate_errors:
+                print(f"  - {error}", file=sys.stderr)
+            return 3
+        print("Strict pre-deploy gate: OK")
+    else:
+        print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
+
     try:
         previous = _current_target(current)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
-        return 3
+        return 4
 
     if previous is not None and previous.resolve() == release:
         print(f"current already points to release: {release}")
@@ -193,21 +241,21 @@ def main() -> int:
     print(f"previous:      {previous or '(none)'}")
 
     if not args.apply:
-        print("[DRY-RUN] Symlink not changed. Re-run with --apply after release validation.")
+        print("[DRY-RUN] Symlink not changed. Re-run with --apply only after all gates pass.")
         return 0
 
     try:
         previous = switch_release(current, release, releases_root=releases_root)
     except RuntimeError as exc:
         print(f"Release switch refused: {exc}", file=sys.stderr)
-        return 4
+        return 5
 
     print(f"[APPLIED] {current} -> {release}")
     if previous is not None:
         print(f"rollback target: {previous}")
         print(
             f"rollback command: {sys.executable} {Path(__file__).name} {previous} "
-            f"--releases-root {releases_root} --current {current} --apply"
+            f"--releases-root {releases_root} --current {current} --whitelist {args.whitelist} --apply"
         )
     return 0
 
