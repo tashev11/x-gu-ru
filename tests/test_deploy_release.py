@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,17 @@ class DeployReleaseTests(unittest.TestCase):
             '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>',
             encoding="utf-8",
         )
+        (release / deploy_release.KEEP_FILENAME).write_text(
+            json.dumps(
+                {
+                    "open_cities": ["moskva"],
+                    "open_services": ["seo-audit-saita"],
+                    "policy_source": "/reviewed/index_policy.json",
+                    "policy_sha256": "a" * 64,
+                }
+            ),
+            encoding="utf-8",
+        )
         return release
 
     def test_validate_release_requires_core_files(self) -> None:
@@ -31,7 +43,26 @@ class DeployReleaseTests(unittest.TestCase):
             release = Path(temp) / "broken"
             release.mkdir()
             errors = deploy_release.validate_release(release)
-            self.assertGreaterEqual(len(errors), 3)
+            self.assertGreaterEqual(len(errors), 4)
+            self.assertTrue(any(deploy_release.KEEP_FILENAME in error for error in errors))
+
+    def test_invalid_keep_manifest_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            release = self._release(root, "candidate")
+            (release / deploy_release.KEEP_FILENAME).write_text(
+                json.dumps(
+                    {
+                        "open_cities": ["moskva"],
+                        "open_services": ["seo-audit-saita"],
+                        "policy_source": "reviewed",
+                        "policy_sha256": "bad",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            errors = deploy_release.validate_release(release)
+            self.assertTrue(any("invalid policy_sha256" in error for error in errors))
 
     def test_atomic_switch_returns_previous_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
