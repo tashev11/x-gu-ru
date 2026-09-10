@@ -22,10 +22,13 @@ from pathlib import Path
 
 
 SERVER_OPT = Path(__file__).resolve().parent
-if str(SERVER_OPT) not in sys.path:
-    sys.path.insert(0, str(SERVER_OPT))
+REPO_ROOT = SERVER_OPT.parent
+for path in (str(SERVER_OPT), str(REPO_ROOT)):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 from predeploy_check import KEEP_FILENAME, WHITELIST_FILENAME, run_predeploy  # noqa: E402
+from release_safety import DEFAULT_RELEASE_LOCK, release_operation_lock  # noqa: E402
 
 
 DEFAULT_CURRENT = Path("/var/www/x-gu.ru/current")
@@ -95,6 +98,28 @@ def _validate_layout(
     return errors
 
 
+def _validate_target(
+    current: Path,
+    releases_root: Path,
+    target_release: Path,
+    backup_release: Path,
+    base_url: str,
+) -> tuple[int, list[str]]:
+    errors = _validate_layout(current, releases_root, target_release, backup_release)
+    if errors:
+        return 2, errors
+
+    ok, gate_errors, _audit = run_predeploy(
+        target_release,
+        keep_config=target_release / KEEP_FILENAME,
+        whitelist=target_release / WHITELIST_FILENAME,
+        base_url=base_url,
+    )
+    if not ok:
+        return 3, gate_errors
+    return 0, []
+
+
 def bootstrap(
     current: Path,
     releases_root: Path,
@@ -135,6 +160,7 @@ def main() -> int:
     parser.add_argument("target_release", type=Path, help="already-built self-contained release candidate")
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
+    parser.add_argument("--lock-file", type=Path, default=DEFAULT_RELEASE_LOCK)
     parser.add_argument(
         "--backup-name",
         default="",
@@ -153,39 +179,44 @@ def main() -> int:
         return 2
     backup_release = releases_root / backup_name
 
-    errors = _validate_layout(current, releases_root, target_release, backup_release)
-    if errors:
-        print("Bootstrap validation: FAIL", file=sys.stderr)
-        for error in errors:
-            print(f"  - {error}", file=sys.stderr)
-        return 2
-
-    ok, gate_errors, _audit = run_predeploy(
-        target_release,
-        keep_config=target_release / KEEP_FILENAME,
-        whitelist=target_release / WHITELIST_FILENAME,
-        base_url=args.base_url,
-    )
-    if not ok:
-        print("Bootstrap target predeploy: FAIL", file=sys.stderr)
-        for error in gate_errors:
-            print(f"  - {error}", file=sys.stderr)
-        return 3
-
-    print("Bootstrap target predeploy: OK")
-    print(f"legacy current: {current}")
-    print(f"target release: {target_release}")
-    print(f"legacy backup:  {backup_release}")
-    print(f"new symlink:    {current} -> {target_release}")
-    print("The validated target is not modified by bootstrap.")
-
     if not args.apply:
+        code, errors = _validate_target(current, releases_root, target_release, backup_release, args.base_url)
+        if errors:
+            label = "Bootstrap validation" if code == 2 else "Bootstrap target predeploy"
+            print(f"{label}: FAIL", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            return code
+
+        print("Bootstrap target predeploy: OK")
+        print(f"legacy current: {current}")
+        print(f"target release: {target_release}")
+        print(f"legacy backup:  {backup_release}")
+        print(f"new symlink:    {current} -> {target_release}")
+        print("The validated target is not modified by bootstrap.")
         print("[DRY-RUN] Nothing changed. Re-run with --apply only during a controlled maintenance window.")
         return 0
 
     try:
-        bootstrap(current, releases_root, target_release, backup_release)
-    except Exception as exc:  # noqa: BLE001
+        with release_operation_lock(args.lock_file.resolve()):
+            # Re-run layout + strict predeploy while the same host-wide lock used
+            # by deploy/prune is held. No other release control-plane operation
+            # can change current between these checks and the bootstrap cutover.
+            code, errors = _validate_target(current, releases_root, target_release, backup_release, args.base_url)
+            if errors:
+                label = "Bootstrap validation" if code == 2 else "Bootstrap target predeploy"
+                print(f"{label}: FAIL", file=sys.stderr)
+                for error in errors:
+                    print(f"  - {error}", file=sys.stderr)
+                return code
+
+            print("Bootstrap target predeploy: OK")
+            print(f"legacy current: {current}")
+            print(f"target release: {target_release}")
+            print(f"legacy backup:  {backup_release}")
+            print(f"new symlink:    {current} -> {target_release}")
+            bootstrap(current, releases_root, target_release, backup_release)
+    except (RuntimeError, FileNotFoundError, OSError) as exc:
         print(f"Bootstrap failed: {exc}", file=sys.stderr)
         return 4
 
