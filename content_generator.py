@@ -8,6 +8,7 @@ Key protections:
 - canonical template resolution and HTML auto-escaping;
 - index policy and whitelist follow the active release through ``current``;
 - missing/mismatched policy or whitelist fail closed;
+- synthetic testimonial data is disabled before rendering;
 - synthetic review/rating/proof markup is stripped from generated HTML;
 - one city morphology implementation is shared across render/repair tools;
 - the existing legacy API remains available to callers.
@@ -51,6 +52,7 @@ _DEFAULT_CURRENT_ROOT = Path("/var/www/x-gu.ru/current")
 
 _ORIGINAL_RENDER_LANDING = _legacy._render_html_landing
 _ORIGINAL_RENDER_CITY_HUB = _legacy._render_city_hub_html
+_ORIGINAL_LANDING_VARIANTS = _legacy._landing_variants
 
 
 def _env_true(name: str) -> bool:
@@ -267,6 +269,18 @@ def _page_is_open(city_slug: str, service_slug: str | None = None) -> bool:
     return service_slug is None or service_slug in keep["open_services"]
 
 
+def _safe_landing_variants(*args, **kwargs) -> dict:
+    """Keep useful variant content but disable fabricated testimonial cards at source."""
+    variants = dict(_ORIGINAL_LANDING_VARIANTS(*args, **kwargs))
+    variants["review_cards"] = []
+    return variants
+
+
+def _disabled_review_variant(*_args, **_kwargs) -> dict[str, str]:
+    """Legacy renderers may still request a review object; return no testimonial data."""
+    return {"author": "", "rating": "", "body": ""}
+
+
 def _clean_jsonld(value):
     if isinstance(value, dict):
         cleaned = {}
@@ -380,6 +394,8 @@ _legacy._template_env = _template_env
 _legacy._load_keep_config = _load_keep_config
 _legacy._page_is_open = _page_is_open
 _legacy._city_prepositional = city_prepositional
+_legacy._landing_variants = _safe_landing_variants
+_legacy._review_variant = _disabled_review_variant
 _legacy._render_html_landing = _render_html_landing
 _legacy._render_city_hub_html = _render_city_hub_html
 
@@ -389,6 +405,8 @@ globals().update(
         "_load_keep_config": _load_keep_config,
         "_page_is_open": _page_is_open,
         "_city_prepositional": city_prepositional,
+        "_landing_variants": _safe_landing_variants,
+        "_review_variant": _disabled_review_variant,
         "_render_html_landing": _render_html_landing,
         "_render_city_hub_html": _render_city_hub_html,
         "_sanitize_generated_html": _sanitize_generated_html,
