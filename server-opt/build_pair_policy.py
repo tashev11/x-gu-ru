@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Build a review-only pair-level SEO policy candidate from search evidence.
+"""Build a review-only pair-level SEO policy candidate.
 
-The output is deliberately ``example_only=true``. It cannot be applied by
-``shrink_index.py`` until a human reviews the exact city/service pairs, records
-review metadata, and explicitly promotes the policy.
+Search evidence answers "does this URL show demand/value?". Pair quality answers
+"is the current page safe enough to recommend for index?". The output always
+remains ``example_only=true`` and therefore cannot be promoted automatically.
 """
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 
 
 DEFAULT_EVIDENCE = Path("/opt/p3-app/data/search_evidence.json")
+DEFAULT_QUALITY = Path("/opt/p3-app/data/pair_quality.json")
 DEFAULT_OUT = Path("/opt/p3-app/data/index_policy.v2.candidate.json")
 DEFAULT_REVIEW = Path("/opt/p3-app/data/index_policy.v2.review.json")
 BASE_HOST = "x-gu.ru"
@@ -28,9 +29,7 @@ def _pair_from_url(url: str) -> tuple[str, str] | None:
     if parsed.scheme != "https" or parsed.hostname != BASE_HOST or parsed.query or parsed.fragment:
         return None
     parts = [part for part in parsed.path.split("/") if part]
-    if len(parts) != 2:
-        return None
-    return parts[0], parts[1]
+    return (parts[0], parts[1]) if len(parts) == 2 else None
 
 
 def _city_from_url(url: str) -> str | None:
@@ -56,17 +55,34 @@ def _signal(record: dict, *, min_impressions: float, min_clicks: float) -> tuple
     return bool(reasons), reasons
 
 
+def _quality_map(payload: dict | None) -> dict[str, dict]:
+    if payload is None:
+        return {}
+    rows = payload.get("pairs") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        raise ValueError("pair quality report must contain a 'pairs' array")
+    result: dict[str, dict] = {}
+    for row in rows:
+        if isinstance(row, dict) and str(row.get("url") or "").strip():
+            result[str(row["url"]).strip()] = row
+    return result
+
+
 def build_candidate(
     evidence_payload: dict,
     *,
+    quality_payload: dict | None = None,
+    require_quality: bool = False,
     min_impressions: float = 5.0,
     min_clicks: float = 1.0,
 ) -> tuple[dict, dict]:
     rows = evidence_payload.get("urls") or []
     if not isinstance(rows, list):
         raise ValueError("search evidence 'urls' must be an array")
+    quality = _quality_map(quality_payload)
 
     selected_pairs: dict[tuple[str, str], dict] = {}
+    rejected_pairs: list[dict] = []
     selected_city_hubs: set[str] = set()
     rejected = Counter()
 
@@ -91,8 +107,19 @@ def build_candidate(
             continue
 
         city_slug, service_slug = pair
-        selected_city_hubs.add(city_slug)
-        selected_pairs[pair] = {
+        quality_row = quality.get(url)
+        quality_state = str((quality_row or {}).get("quality_state") or "unknown")
+        quality_flags = list((quality_row or {}).get("flags") or [])
+
+        reject_reason: str | None = None
+        if quality_state == "improve_before_index":
+            reject_reason = "quality_hard_fail"
+        elif require_quality and quality_row is None:
+            reject_reason = "quality_missing"
+        elif require_quality and quality_state not in {"clean", "review_similarity"}:
+            reject_reason = "quality_unknown"
+
+        review_row = {
             "url": url,
             "city": city_slug,
             "service": service_slug,
@@ -102,7 +129,22 @@ def build_candidate(
             "gsc_clicks": float(raw.get("gsc_clicks") or 0.0),
             "gsc_position": raw.get("gsc_position"),
             "manual_protected": bool(raw.get("manual_protected")),
+            "quality_state": quality_state,
+            "quality_flags": quality_flags,
         }
+
+        if reject_reason is not None:
+            rejected[reject_reason] += 1
+            review_row["recommendation"] = "improve_before_index"
+            review_row["rejection_reason"] = reject_reason
+            rejected_pairs.append(review_row)
+            continue
+
+        selected_city_hubs.add(city_slug)
+        review_row["recommendation"] = (
+            "review_similarity" if quality_state == "review_similarity" else "candidate_open"
+        )
+        selected_pairs[pair] = review_row
 
     pairs = sorted(selected_pairs)
     open_cities = sorted(selected_city_hubs | {city for city, _service in pairs})
@@ -111,8 +153,9 @@ def build_candidate(
         "example_only": True,
         "reviewed_at": None,
         "source_note": (
-            "AUTO-GENERATED REVIEW CANDIDATE from combined Yandex/GSC/manual search evidence. "
-            "Review exact pairs and page quality before setting example_only=false."
+            "AUTO-GENERATED REVIEW CANDIDATE from combined Yandex/GSC/manual evidence"
+            + (" intersected with pair-quality audit." if quality_payload is not None else ".")
+            + " Review exact pairs before setting example_only=false."
         ),
         "open_cities": open_cities,
         "open_pairs": [f"{city}/{service}" for city, service in pairs],
@@ -120,6 +163,8 @@ def build_candidate(
     review = {
         "generated_at": date.today().isoformat(),
         "source_evidence_generated_at": evidence_payload.get("generated_at"),
+        "quality_report_used": quality_payload is not None,
+        "quality_required": require_quality,
         "thresholds": {
             "gsc_min_impressions": min_impressions,
             "gsc_min_clicks": min_clicks,
@@ -129,10 +174,14 @@ def build_candidate(
             "candidate_city_hubs": len(open_cities),
             "candidate_pairs": len(pairs),
             "rejected_below_threshold": rejected["below_threshold"],
+            "rejected_quality_hard_fail": rejected["quality_hard_fail"],
+            "rejected_quality_missing": rejected["quality_missing"],
+            "rejected_quality_unknown": rejected["quality_unknown"],
             "rejected_non_pair_url": rejected["non_pair_url"],
             "invalid_records": rejected["invalid_record"],
         },
         "pairs": [selected_pairs[pair] for pair in pairs],
+        "rejected_pairs": sorted(rejected_pairs, key=lambda row: row["url"]),
     }
     return policy, review
 
@@ -154,6 +203,8 @@ def _atomic_write(path: Path, text: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence", type=Path, default=DEFAULT_EVIDENCE)
+    parser.add_argument("--quality", type=Path, default=DEFAULT_QUALITY)
+    parser.add_argument("--skip-quality", action="store_true", help="build evidence-only candidate; review use only")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--review-out", type=Path, default=DEFAULT_REVIEW)
     parser.add_argument("--gsc-min-impressions", type=float, default=5.0)
@@ -167,10 +218,20 @@ def main() -> int:
     if not args.evidence.is_file():
         print(f"Evidence file not found: {args.evidence}", file=sys.stderr)
         return 2
+    if not args.skip_quality and not args.quality.is_file():
+        print(
+            f"Pair quality report not found: {args.quality}. Run pair_quality_audit.py first or use --skip-quality for evidence-only review.",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         evidence = json.loads(args.evidence.read_text(encoding="utf-8", errors="strict"))
+        quality = None if args.skip_quality else json.loads(args.quality.read_text(encoding="utf-8", errors="strict"))
         policy, review = build_candidate(
             evidence,
+            quality_payload=quality,
+            require_quality=not args.skip_quality,
             min_impressions=args.gsc_min_impressions,
             min_clicks=args.gsc_min_clicks,
         )
@@ -179,10 +240,13 @@ def main() -> int:
         return 2
 
     print("Pair-level SEO policy candidate")
-    print(f"  evidence rows:   {review['counts']['evidence_rows']}")
-    print(f"  city hubs:       {review['counts']['candidate_city_hubs']}")
-    print(f"  exact pairs:     {review['counts']['candidate_pairs']}")
-    print(f"  below threshold: {review['counts']['rejected_below_threshold']}")
+    print(f"  evidence rows:              {review['counts']['evidence_rows']}")
+    print(f"  quality report used:        {review['quality_report_used']}")
+    print(f"  city hubs:                  {review['counts']['candidate_city_hubs']}")
+    print(f"  exact candidate pairs:      {review['counts']['candidate_pairs']}")
+    print(f"  below search threshold:     {review['counts']['rejected_below_threshold']}")
+    print(f"  quality hard-fail rejected: {review['counts']['rejected_quality_hard_fail']}")
+    print(f"  quality missing/unknown:    {review['counts']['rejected_quality_missing'] + review['counts']['rejected_quality_unknown']}")
     print("  SAFETY: output remains example_only=true and cannot be applied directly.")
 
     if not args.apply:
