@@ -6,7 +6,7 @@
 
 Никогда не делать `git pull`, массовый patch или `cp -r` прямо в `/var/www/x-gu.ru/current`.
 
-Нормальная схема:
+Нормальная схема после первоначальной миграции:
 
 ```text
 отдельный checkout tooling
@@ -53,22 +53,24 @@ git -C /opt/p3-app remote -v 2>/dev/null || true
 
 test -s /opt/p3-app/data/index_policy.json && echo "index policy: present" || echo "index policy: MISSING"
 test -s /opt/p3-app/data/whitelist.txt && echo "source whitelist: present" || echo "source whitelist: MISSING"
+
+# Проверить, что Nginx действительно смотрит в ожидаемый current path.
+sudo nginx -T 2>/dev/null | grep -n '/var/www/x-gu.ru/current' || true
 ```
 
 ### Жёсткие stop-условия
 
-Не продолжать production rollout, если выполняется хотя бы одно:
+Не продолжать обычный production rollout, если выполняется хотя бы одно:
 
-- `/var/www/x-gu.ru/current` существует, но не является symlink;
 - `/opt/p3-app/app/services` отсутствует;
 - reviewed `/opt/p3-app/data/index_policy.json` отсутствует;
 - `/opt/p3-app/data/whitelist.txt` отсутствует;
-- свободного диска недостаточно для копии текущего static release;
 - есть непонятные незакоммиченные изменения, которые rollout может затронуть;
 - невозможно запустить Python 3.11+;
-- validator не проходит.
+- validator не проходит;
+- Nginx root не соответствует ожидаемому `/var/www/x-gu.ru/current` и это не объяснено.
 
-Если `current` пока является реальным каталогом, сначала нужен отдельный bootstrap-переход на release/symlink-модель. Не переименовывать live-каталог автоматически без отдельного плана и проверки Nginx root.
+Если `/var/www/x-gu.ru/current` существует, но **не является symlink**, обычный deploy останавливается и используется только one-time bootstrap из раздела 3A ниже. Не переименовывать live-каталог вручную.
 
 ## 1. Отдельный checkout ветки tooling
 
@@ -107,9 +109,112 @@ python scripts/validate_repo.py
 
 Продолжать только при успешном завершении всех проверок.
 
-## 3. Создать отдельный release-кандидат
+## 3A. One-time bootstrap, если `current` ещё обычный каталог
 
-Этот этап разрешён только если `current` уже symlink.
+Этот путь используется **только один раз**. Если `current` уже symlink, пропустить раздел 3A и перейти к разделу 3B.
+
+Сначала создать отдельный candidate-клон текущего static сайта. Сам live-каталог не менять:
+
+```bash
+set -euo pipefail
+
+CURRENT=/var/www/x-gu.ru/current
+RELEASES=/var/www/x-gu.ru/releases
+STAMP="$(date +%Y%m%d-%H%M%S)"
+RELEASE="$RELEASES/bootstrap-candidate-$STAMP"
+
+[ -d "$CURRENT" ]
+[ ! -L "$CURRENT" ]
+mkdir -p "$RELEASES"
+mkdir "$RELEASE"
+cp -a "$CURRENT"/. "$RELEASE"/
+
+echo "LEGACY_CURRENT=$CURRENT"
+echo "BOOTSTRAP_CANDIDATE=$RELEASE"
+```
+
+Проверить свободное место до копирования. Если места недостаточно для отдельного candidate — остановиться, а не пытаться мигрировать live-каталог без rollback-копии.
+
+Применить reviewed policy и source whitelist **только к candidate**:
+
+```bash
+cd /opt/x-gu-ru-tooling
+. .venv/bin/activate
+
+POLICY=/opt/p3-app/data/index_policy.json
+SOURCE_WHITELIST=/opt/p3-app/data/whitelist.txt
+
+python server-opt/shrink_index.py \
+  --web-root "$RELEASE" \
+  --policy "$POLICY" \
+  --whitelist "$SOURCE_WHITELIST"
+```
+
+После проверки dry-run counts:
+
+```bash
+python server-opt/shrink_index.py \
+  --web-root "$RELEASE" \
+  --policy "$POLICY" \
+  --whitelist "$SOURCE_WHITELIST" \
+  --apply
+```
+
+Очистить synthetic proof только в candidate:
+
+```bash
+python server-opt/sanitize_generated_proof.py --root "$RELEASE"
+python server-opt/sanitize_generated_proof.py --root "$RELEASE" --apply
+```
+
+Запустить strict predeploy:
+
+```bash
+python server-opt/predeploy_check.py "$RELEASE"
+```
+
+Продолжать только при `Pre-deploy check: OK`.
+
+Теперь preview one-time cutover:
+
+```bash
+python server-opt/bootstrap_release_layout.py "$RELEASE"
+```
+
+Скрипт должен показать:
+
+- legacy current directory;
+- target release;
+- будущий `pre-bootstrap-*` backup;
+- `Bootstrap target predeploy: OK`;
+- отсутствие изменений в dry-run.
+
+Только в контролируемое окно и только после проверки preview:
+
+```bash
+python server-opt/bootstrap_release_layout.py "$RELEASE" --apply
+```
+
+Bootstrap:
+
+1. не изменяет проверенный candidate;
+2. переименовывает старый реальный `current` в `/var/www/x-gu.ru/releases/pre-bootstrap-*`;
+3. ставит `current` symlink на проверенный candidate;
+4. пытается автоматически вернуть legacy directory обратно в `current`, если установка symlink не удалась.
+
+Сразу после bootstrap:
+
+```bash
+readlink -f /var/www/x-gu.ru/current
+SEOHC_ROOT=/var/www/x-gu.ru/current python /opt/x-gu-ru-tooling/seo_healthcheck.py
+curl --resolve x-gu.ru:443:127.0.0.1 -fsS -I https://x-gu.ru/
+```
+
+Сохранить путь `pre-bootstrap-*` как emergency legacy backup. Не удалять его при первом rollout.
+
+После успешного bootstrap сервер уже находится на стандартной release/symlink-модели. Для следующего изменения использовать раздел 3B и далее.
+
+## 3B. Создать обычный release-кандидат, если `current` уже symlink
 
 ```bash
 set -euo pipefail
@@ -122,7 +227,8 @@ RELEASE="$RELEASES/$STAMP"
 
 [ -d "$SOURCE" ]
 [ -L "$CURRENT" ]
-mkdir -p "$RELEASE"
+mkdir -p "$RELEASES"
+mkdir "$RELEASE"
 cp -a "$SOURCE"/. "$RELEASE"/
 
 echo "SOURCE=$SOURCE"
@@ -131,7 +237,9 @@ echo "RELEASE=$RELEASE"
 
 После копирования `current` не изменён; сайт продолжает работать со старого release.
 
-## 4. Применить reviewed index policy только к кандидату
+## 4. Применить reviewed index policy только к обычному кандидату
+
+Если раздел 3A уже выполнил policy для bootstrap candidate, этот шаг повторять для него не нужно. Для обычного release из 3B:
 
 ```bash
 cd /opt/x-gu-ru-tooling
@@ -228,6 +336,8 @@ python server-opt/deploy_release.py "$RELEASE"
 
 ## 8. Атомарно переключить production
 
+Этот раздел используется после того, как `current` уже symlink. Для первоначального перехода из реального каталога используется только bootstrap из 3A.
+
 Только после успешных шагов выше:
 
 ```bash
@@ -266,7 +376,7 @@ curl --resolve x-gu.ru:443:127.0.0.1 -fsS https://x-gu.ru/sitemap.xml | head -50
 
 ## 10. Rollback
 
-Если после переключения обнаружена проблема, использовать `rollback target`, напечатанный deploy helper:
+Для обычных symlink-based releases использовать `rollback target`, напечатанный deploy helper:
 
 ```bash
 python /opt/x-gu-ru-tooling/server-opt/deploy_release.py \
@@ -274,7 +384,9 @@ python /opt/x-gu-ru-tooling/server-opt/deploy_release.py \
   --apply
 ```
 
-Старый release содержит собственные `.xgu-index-keep.json` и `.xgu-whitelist.txt`, поэтому rollback возвращает согласованную HTML/SEO policy, а не смешивает старый HTML с новым whitelist.
+Self-contained releases содержат собственные `.xgu-index-keep.json` и `.xgu-whitelist.txt`, поэтому rollback возвращает согласованную HTML/SEO policy.
+
+После самого первого bootstrap отдельно сохранить `pre-bootstrap-*` как emergency legacy copy. Не пытаться подавать эту legacy-копию в `deploy_release.py`, если в ней нет self-contained release contract. Если нужен аварийный возврат именно к legacy-копии, остановить дальнейшие действия и выполнить осознанный ручной recovery под контролем оператора.
 
 ## 11. Nginx — отдельный rollout
 
@@ -308,7 +420,7 @@ python /opt/x-gu-ru-tooling/server-opt/prune_releases.py --keep 5
 python /opt/x-gu-ru-tooling/server-opt/prune_releases.py --keep 5 --apply
 ```
 
-Active release перепроверяется непосредственно перед каждым удалением.
+Active release перепроверяется непосредственно перед каждым удалением. `pre-bootstrap-*` не удалять, пока отдельно не принято решение, что legacy emergency copy больше не нужна.
 
 ## Что оператор должен вернуть владельцу после работы
 
@@ -316,11 +428,13 @@ Active release перепроверяется непосредственно п�
 
 - SHA ветки, которая была проверена;
 - результат `python scripts/validate_repo.py`;
-- прежний `current` target;
+- исходный тип `current`: real directory или symlink;
+- прежний `current` target, если он был symlink;
 - новый release path;
+- при bootstrap — путь `pre-bootstrap-*` legacy backup;
 - результат dry-run/apply `shrink_index.py`;
 - результат `predeploy_check.py`;
-- результат `deploy_release.py`;
+- результат `bootstrap_release_layout.py` или `deploy_release.py`;
 - новый `current` target;
 - результат post-deploy healthcheck/curl;
 - rollback target;
