@@ -19,6 +19,7 @@ for path in (str(SERVER_OPT), str(REPO_ROOT)):
         sys.path.insert(0, path)
 
 from predeploy_check import run_predeploy  # noqa: E402
+from release_safety import DEFAULT_RELEASE_LOCK, release_operation_lock  # noqa: E402
 
 
 DEFAULT_RELEASES_ROOT = Path("/var/www/x-gu.ru/releases")
@@ -184,11 +185,31 @@ def switch_release(current: Path, release: Path, *, releases_root: Path | None =
     return previous
 
 
+def _validate_candidate(release: Path, releases_root: Path, base_url: str, unsafe_skip: bool) -> tuple[int, list[str]]:
+    errors = validate_release(release, releases_root=releases_root)
+    if errors:
+        return 2, errors
+
+    if unsafe_skip:
+        return 0, []
+
+    ok, gate_errors, _audit = run_predeploy(
+        release,
+        keep_config=release / KEEP_FILENAME,
+        whitelist=release / WHITELIST_FILENAME,
+        base_url=base_url,
+    )
+    if not ok:
+        return 3, gate_errors
+    return 0, []
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("release_dir", type=Path, help="fully built release directory")
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    parser.add_argument("--lock-file", type=Path, default=DEFAULT_RELEASE_LOCK)
     parser.add_argument("--base-url", default="https://x-gu.ru")
     parser.add_argument(
         "--unsafe-skip-predeploy",
@@ -202,52 +223,64 @@ def main() -> int:
     releases_root = args.releases_root.resolve()
     current = args.current
 
-    errors = validate_release(release, releases_root=releases_root)
-    if errors:
-        print("Release validation: FAIL", file=sys.stderr)
-        for error in errors:
-            print(f"  - {error}", file=sys.stderr)
-        return 2
-
-    if not args.unsafe_skip_predeploy:
-        ok, gate_errors, _audit = run_predeploy(
-            release,
-            keep_config=release / KEEP_FILENAME,
-            whitelist=release / WHITELIST_FILENAME,
-            base_url=args.base_url,
-        )
-        if not ok:
-            print("Strict pre-deploy gate: FAIL", file=sys.stderr)
-            for error in gate_errors:
-                print(f"  - {error}", file=sys.stderr)
-            return 3
-        print("Strict pre-deploy gate: OK")
-    else:
-        print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
-
-    try:
-        previous = _current_target(current)
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
-        return 4
-
-    if previous is not None and previous.resolve() == release:
-        print(f"current already points to release: {release}")
-        return 0
-
-    print("Release validation: OK")
-    print(f"release:       {release}")
-    print(f"releases root: {releases_root}")
-    print(f"current:       {current}")
-    print(f"previous:      {previous or '(none)'}")
-
     if not args.apply:
+        code, errors = _validate_candidate(release, releases_root, args.base_url, args.unsafe_skip_predeploy)
+        if errors:
+            label = "Release validation" if code == 2 else "Strict pre-deploy gate"
+            print(f"{label}: FAIL", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            return code
+        if args.unsafe_skip_predeploy:
+            print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
+        else:
+            print("Strict pre-deploy gate: OK")
+        try:
+            previous = _current_target(current)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 4
+        if previous is not None and previous.resolve() == release:
+            print(f"current already points to release: {release}")
+            return 0
+        print("Release validation: OK")
+        print(f"release:       {release}")
+        print(f"releases root: {releases_root}")
+        print(f"current:       {current}")
+        print(f"previous:      {previous or '(none)'}")
         print("[DRY-RUN] Symlink not changed. Re-run with --apply only after all gates pass.")
         return 0
 
     try:
-        previous = switch_release(current, release, releases_root=releases_root)
-    except RuntimeError as exc:
+        with release_operation_lock(args.lock_file.resolve()):
+            # Re-run every gate while the production release lock is held. This
+            # prevents a second deploy/bootstrap/prune from changing state
+            # between validation and the final current switch.
+            code, errors = _validate_candidate(release, releases_root, args.base_url, args.unsafe_skip_predeploy)
+            if errors:
+                label = "Release validation" if code == 2 else "Strict pre-deploy gate"
+                print(f"{label}: FAIL", file=sys.stderr)
+                for error in errors:
+                    print(f"  - {error}", file=sys.stderr)
+                return code
+            if args.unsafe_skip_predeploy:
+                print("WARNING: strict pre-deploy gate skipped by emergency override", file=sys.stderr)
+            else:
+                print("Strict pre-deploy gate: OK")
+
+            previous = _current_target(current)
+            if previous is not None and previous.resolve() == release:
+                print(f"current already points to release: {release}")
+                return 0
+
+            print("Release validation: OK")
+            print(f"release:       {release}")
+            print(f"releases root: {releases_root}")
+            print(f"current:       {current}")
+            print(f"previous:      {previous or '(none)'}")
+
+            previous = switch_release(current, release, releases_root=releases_root)
+    except (RuntimeError, FileNotFoundError) as exc:
         print(f"Release switch refused: {exc}", file=sys.stderr)
         return 5
 
@@ -256,7 +289,7 @@ def main() -> int:
         print(f"rollback target: {previous}")
         print(
             f"rollback command: {sys.executable} {Path(__file__).name} {previous} "
-            f"--releases-root {releases_root} --current {current} --apply"
+            f"--releases-root {releases_root} --current {current} --lock-file {args.lock_file} --apply"
         )
     return 0
 
