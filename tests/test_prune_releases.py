@@ -56,6 +56,43 @@ class PruneReleaseTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 prune_releases._safe_delete(nested, root)
 
+    def test_nested_current_target_is_not_accepted_as_active_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            nested = root / "r1" / "nested"
+            nested.mkdir(parents=True)
+            current = Path(temp) / "current"
+            current.symlink_to(nested)
+
+            self.assertIsNone(prune_releases._current_release(current, root))
+
+    def test_rechecks_current_immediately_before_delete(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            root.mkdir()
+            old_active = self._release(root, "r3", 10)
+            candidate = self._release(root, "r1", 30)
+            current = Path(temp) / "current"
+            current.symlink_to(old_active)
+
+            current.unlink()
+            current.symlink_to(candidate)
+
+            with self.assertRaises(RuntimeError):
+                prune_releases._delete_if_still_inactive(candidate, root, current)
+            self.assertTrue(candidate.is_dir())
+
+    def test_refuses_delete_when_current_cannot_be_proven(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "releases"
+            root.mkdir()
+            candidate = self._release(root, "r1", 30)
+            current = Path(temp) / "current"
+
+            with self.assertRaises(RuntimeError):
+                prune_releases._delete_if_still_inactive(candidate, root, current)
+            self.assertTrue(candidate.is_dir())
+
 
 if __name__ == "__main__":
     unittest.main()
