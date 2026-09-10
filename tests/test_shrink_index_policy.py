@@ -87,36 +87,67 @@ class ShrinkIndexPolicyTests(unittest.TestCase):
             whitelist = Path(temp) / "whitelist.txt"
             whitelist.write_text("https://example.com/moskva/\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
-                shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
+                shrink.load_whitelist_urls(whitelist)
 
     def test_whitelist_rejects_path_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             whitelist = Path(temp) / "whitelist.txt"
             whitelist.write_text("https://x-gu.ru/moskva/../admin/\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
-                shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
+                shrink.load_whitelist_urls(whitelist)
+
+    def test_whitelist_rejects_unsupported_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            whitelist = Path(temp) / "whitelist.txt"
+            whitelist.write_text("https://x-gu.ru/moskva/service/extra/\n", encoding="utf-8")
+            with self.assertRaises(SystemExit):
+                shrink.load_whitelist_urls(whitelist)
 
     def test_relative_whitelist_path_is_canonicalized(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             whitelist = Path(temp) / "whitelist.txt"
             whitelist.write_text("/moskva/seo-audit-saita\n", encoding="utf-8")
-            keep = shrink.build_keep_urls(whitelist, ["moskva"], ["seo-audit-saita"])
+            urls = shrink.load_whitelist_urls(whitelist)
+            self.assertEqual(urls, {"https://x-gu.ru/moskva/seo-audit-saita/"})
+            keep = shrink.build_keep_urls_from_whitelist(urls, ["moskva"], ["seo-audit-saita"])
             self.assertIn("https://x-gu.ru/moskva/seo-audit-saita/", keep)
 
-    def test_release_keep_config_is_written_inside_release(self) -> None:
+    def test_whitelist_snapshot_is_sorted_and_hash_is_deterministic(self) -> None:
+        urls = {
+            "https://x-gu.ru/tver/",
+            "https://x-gu.ru/moskva/seo-audit-saita/",
+        }
+        expected_text = (
+            "https://x-gu.ru/moskva/seo-audit-saita/\n"
+            "https://x-gu.ru/tver/\n"
+        )
+        self.assertEqual(shrink._whitelist_snapshot_text(urls), expected_text)
+        self.assertEqual(shrink.whitelist_digest(urls), shrink.whitelist_digest(set(reversed(sorted(urls)))))
+
+    def test_release_contract_files_are_written_inside_release(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             release = Path(temp)
-            path = shrink.write_release_keep_config(
+            urls = {"https://x-gu.ru/moskva/"}
+            whitelist_path = shrink.write_release_whitelist(release, urls)
+            whitelist_sha = shrink.whitelist_digest(urls)
+            keep_path = shrink.write_release_keep_config(
                 release,
                 ["moskva"],
                 ["seo-audit-saita"],
                 policy_source="/reviewed/index_policy.json",
                 policy_sha256="a" * 64,
+                whitelist_source="/reviewed/whitelist.txt",
+                whitelist_sha256=whitelist_sha,
             )
-            self.assertEqual(path, release / shrink.RELEASE_KEEP_FILENAME)
-            payload = json.loads(path.read_text(encoding="utf-8"))
+
+            self.assertEqual(whitelist_path, release / shrink.RELEASE_WHITELIST_FILENAME)
+            self.assertEqual(keep_path, release / shrink.RELEASE_KEEP_FILENAME)
+            self.assertEqual(whitelist_path.read_text(encoding="utf-8"), "https://x-gu.ru/moskva/\n")
+            payload = json.loads(keep_path.read_text(encoding="utf-8"))
             self.assertEqual(payload["open_cities"], ["moskva"])
             self.assertEqual(payload["policy_sha256"], "a" * 64)
+            self.assertEqual(payload["whitelist_sha256"], whitelist_sha)
+            self.assertEqual(payload["whitelist_source"], "/reviewed/whitelist.txt")
 
     def test_shared_release_guard_is_used_for_apply_targets(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
