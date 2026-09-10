@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Re-render homepage and discovered city hubs in a self-contained release.
 
-The homepage is restricted to the candidate's open-city policy, and open city
-hubs expose only policy-open services plus per-city whitelist extras. Rendering
-is bound to the candidate's own policy and whitelist snapshots.
+Policy v1 exposes the historical service matrix. Policy v2 exposes only exact
+city/service pairs plus protected whitelist exceptions for each city.
 """
 from __future__ import annotations
 
@@ -24,6 +23,7 @@ os.chdir(APP_ROOT)
 
 from app.core.config import settings  # noqa: E402
 from app.services.content_generator import _homepage_cities, _render_city_hub_html, _template_env  # noqa: E402
+from app.services.index_policy import normalize_policy_payload, services_for_city  # noqa: E402
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
@@ -44,7 +44,7 @@ def _valid_sha256(value: object) -> bool:
     return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
-def load_contract(keep_config: Path, whitelist: Path) -> tuple[list[str], list[str]]:
+def load_contract(keep_config: Path, whitelist: Path) -> dict:
     if not keep_config.is_file():
         raise SystemExit(f"Release policy manifest missing: {keep_config}")
     if not whitelist.is_file():
@@ -55,11 +55,11 @@ def load_contract(keep_config: Path, whitelist: Path) -> tuple[list[str], list[s
         raise SystemExit(f"Invalid release policy manifest: {exc}") from exc
     if not isinstance(payload, dict):
         raise SystemExit("release policy manifest root must be a JSON object")
+    try:
+        policy = normalize_policy_payload(payload)
+    except ValueError as exc:
+        raise SystemExit(f"invalid release index policy: {exc}") from exc
 
-    open_cities = list(payload.get("open_cities") or [])
-    open_services = list(payload.get("open_services") or [])
-    if not open_cities or not open_services:
-        raise SystemExit("release policy manifest has empty open_cities/open_services")
     if not str(payload.get("policy_source") or "").strip() or not _valid_sha256(payload.get("policy_sha256")):
         raise SystemExit("release policy manifest has invalid policy provenance")
     if not str(payload.get("whitelist_source") or "").strip() or not _valid_sha256(payload.get("whitelist_sha256")):
@@ -69,7 +69,7 @@ def load_contract(keep_config: Path, whitelist: Path) -> tuple[list[str], list[s
     actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
     if actual != expected:
         raise SystemExit(f"release whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
-    return open_cities, open_services
+    return policy
 
 
 def whitelist_extras(path: Path) -> dict[str, set[str]]:
@@ -96,11 +96,7 @@ def load_city_map() -> dict[str, SimpleNamespace]:
             slug = (row.get("slug") or "").strip()
             name = (row.get("city") or "").strip()
             if slug and name:
-                mapping[slug] = SimpleNamespace(
-                    slug=slug,
-                    name=name,
-                    region=(row.get("region") or "Россия").strip(),
-                )
+                mapping[slug] = SimpleNamespace(slug=slug, name=name, region=(row.get("region") or "Россия").strip())
     return mapping
 
 
@@ -163,7 +159,8 @@ def main() -> int:
     release_root = args.root.resolve()
     keep_config = release_root / RELEASE_KEEP_FILENAME
     whitelist = release_root / RELEASE_WHITELIST_FILENAME
-    open_cities, open_services = load_contract(keep_config, whitelist)
+    policy = load_contract(keep_config, whitelist)
+    open_cities = list(policy["open_cities"])
     extras = whitelist_extras(whitelist)
 
     os.environ["XGU_KEEP_CONFIG"] = str(keep_config)
@@ -177,10 +174,11 @@ def main() -> int:
     homepage_by_slug = {item["slug"]: item for item in homepage_catalog}
     cities_for_home = [homepage_by_slug[slug] for slug in open_cities if slug in homepage_by_slug]
 
+    policy_service_slugs = sorted({service for city in open_cities for service in services_for_city(policy, city)})
     whitelist_service_slugs = sorted({service for values in extras.values() for service in values})
     missing_open_cities = [slug for slug in open_cities if slug not in city_map]
     missing_home_cities = [slug for slug in open_cities if slug not in homepage_by_slug]
-    missing_open_services = [slug for slug in open_services if slug not in service_map]
+    missing_open_services = [slug for slug in policy_service_slugs if slug not in service_map]
     missing_whitelist_services = [slug for slug in whitelist_service_slugs if slug not in service_map]
     discovered_hub_slugs = {city.slug for _path, city in hubs}
     missing_open_hubs = [slug for slug in open_cities if slug not in discovered_hub_slugs]
@@ -195,16 +193,17 @@ def main() -> int:
     if missing_home_cities:
         integrity_errors.append("open cities missing from homepage catalog: " + ", ".join(missing_home_cities))
     if missing_open_services:
-        integrity_errors.append("open services missing from service CSV: " + ", ".join(missing_open_services))
+        integrity_errors.append("policy services missing from service CSV: " + ", ".join(missing_open_services))
     if missing_whitelist_services:
         integrity_errors.append("whitelist services missing from service CSV: " + ", ".join(missing_whitelist_services))
     if missing_open_hubs:
         integrity_errors.append("open city hubs missing from candidate: " + ", ".join(missing_open_hubs))
 
+    pair_count = len(policy["open_pairs"]) if policy["policy_version"] == 2 else len(open_cities) * len(policy["open_services"])
     print(
-        f"plan: homepage_cities={len(cities_for_home)} hubs={len(hubs)} "
-        f"open_cities={len(open_cities)} open_services={len(open_services)} "
-        f"integrity_errors={len(integrity_errors)}"
+        f"plan: policy_v={policy['policy_version']} mode={policy['policy_mode']} "
+        f"homepage_cities={len(cities_for_home)} hubs={len(hubs)} open_cities={len(open_cities)} "
+        f"indexable_pairs={pair_count} integrity_errors={len(integrity_errors)}"
     )
     for error in integrity_errors:
         print(f"  ERROR: {error}", file=sys.stderr)
@@ -239,12 +238,11 @@ def main() -> int:
         rendered = 0
         for hub_file, city in hubs:
             if city.slug in open_set:
-                allowed_slugs = list(dict.fromkeys(open_services + sorted(extras.get(city.slug, set()))))
+                allowed_slugs = list(
+                    dict.fromkeys(services_for_city(policy, city.slug) + sorted(extras.get(city.slug, set())))
+                )
                 services = [service_map[slug] for slug in allowed_slugs]
             else:
-                # Closed hubs remain useful as noindex content, but they cannot
-                # affect homepage navigation and the hardened renderer keeps
-                # their robots state bound to this candidate policy.
                 services = all_services
             html = _render_city_hub_html(city, services)
             atomic_replace_text(hub_file, html)
