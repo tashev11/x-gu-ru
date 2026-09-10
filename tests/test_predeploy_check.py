@@ -17,19 +17,19 @@ SPEC.loader.exec_module(predeploy)
 BASE = "https://x-gu.ru"
 
 
-def page_html(canonical: str, *, noindex: bool = False) -> str:
+def page_html(canonical: str, label: str, *, noindex: bool = False) -> str:
     robots = "noindex, follow" if noindex else "index,follow"
     body = " ".join(["контент"] * 270)
     return f"""<!doctype html>
 <html lang="ru"><head>
-<title>Проверочная страница для безопасного релиза</title>
-<meta name="description" content="Проверочное описание страницы достаточной длины для строгого SEO контроля перед безопасной публикацией сайта.">
+<title>{label}: проверочная страница безопасного релиза</title>
+<meta name="description" content="Проверочное описание страницы {label} достаточной длины для строгого SEO контроля перед безопасной публикацией сайта.">
 <meta name="robots" content="{robots}">
 <link rel="canonical" href="{canonical}">
-<meta property="og:title" content="Проверка">
-<meta property="og:description" content="Проверка описания">
+<meta property="og:title" content="{label}">
+<meta property="og:description" content="Проверка описания {label}">
 <script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebPage"}}</script>
-</head><body><h1>Проверочная страница релиза</h1><p>{body}</p></body></html>"""
+</head><body><h1>{label}: контроль релиза</h1><p>{body}</p></body></html>"""
 
 
 class PredeployCheckTests(unittest.TestCase):
@@ -38,11 +38,15 @@ class PredeployCheckTests(unittest.TestCase):
         root = Path(temp.name)
         release = root / "release"
         release.mkdir()
-        (release / "index.html").write_text(page_html(f"{BASE}/"), encoding="utf-8")
+        (release / "index.html").write_text(page_html(f"{BASE}/", "Главная"), encoding="utf-8")
         (release / "moskva").mkdir()
-        (release / "moskva" / "index.html").write_text(page_html(f"{BASE}/moskva/"), encoding="utf-8")
+        (release / "moskva" / "index.html").write_text(
+            page_html(f"{BASE}/moskva/", "Москва"), encoding="utf-8"
+        )
         (release / "tula").mkdir()
-        (release / "tula" / "index.html").write_text(page_html(f"{BASE}/tula/", noindex=True), encoding="utf-8")
+        (release / "tula" / "index.html").write_text(
+            page_html(f"{BASE}/tula/", "Тула", noindex=True), encoding="utf-8"
+        )
         (release / "sitemap.xml").write_text(
             f"<?xml version='1.0'?><urlset><url><loc>{BASE}/</loc></url><url><loc>{BASE}/moskva/</loc></url></urlset>",
             encoding="utf-8",
