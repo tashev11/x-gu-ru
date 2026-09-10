@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Apply known idempotent fixes to deployed landing pages.
+"""Apply known idempotent fixes to generated landing pages.
 
-Safe by default: the script reports planned replacements only. Use ``--apply``
-to write files after reviewing the counts.
+Safe by default: the script reports planned replacements only. Apply must target
+an isolated release candidate unless an explicit emergency override allows the
+active current target.
 """
 from __future__ import annotations
 
@@ -10,7 +11,19 @@ import argparse
 import sys
 from pathlib import Path
 
-DEFAULT_ROOT = Path("/var/www/x-gu.ru/current")
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from release_safety import (  # noqa: E402
+    DEFAULT_CURRENT,
+    DEFAULT_RELEASES_ROOT,
+    atomic_replace_text,
+    mutation_target_error,
+)
+
+
+DEFAULT_ROOT = DEFAULT_CURRENT
 FOOT = 'class="hover:text-blue-400 transition"'
 REPLACEMENTS = [
     ('type="url" id="website"', 'type="text" inputmode="url" id="website"'),
@@ -51,23 +64,40 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="actually write changes")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
+    parser.add_argument(
+        "--unsafe-allow-active-current",
+        action="store_true",
+        help="emergency override allowing writes directly to active current",
+    )
     args = parser.parse_args()
 
     if not args.root.is_dir():
         print(f"Root not found: {args.root}", file=sys.stderr)
         return 1
+    if args.apply:
+        target_error = mutation_target_error(
+            args.root,
+            current=args.current,
+            releases_root=args.releases_root,
+            allow_active_current=args.unsafe_allow_active_current,
+        )
+        if target_error:
+            print(f"Refusing apply before scan/write: {target_error}", file=sys.stderr)
+            return 3
 
     scanned = touched = total = errors = 0
     for html in args.root.rglob("index.html"):
         scanned += 1
         try:
-            text = html.read_text(encoding="utf-8")
+            text = html.read_text(encoding="utf-8", errors="strict")
             new_text, replacements = patch(text)
             if replacements:
                 touched += 1
                 total += replacements
                 if args.apply:
-                    html.write_text(new_text, encoding="utf-8")
+                    atomic_replace_text(html, new_text)
         except Exception as exc:  # noqa: BLE001
             errors += 1
             print(f"  ERROR {html}: {exc}", file=sys.stderr)
@@ -79,12 +109,9 @@ def main() -> int:
             )
 
     mode = "APPLIED" if args.apply else "DRY-RUN"
-    print(
-        f"[{mode}] scanned={scanned} touched={touched} "
-        f"replacements={total} errors={errors}"
-    )
+    print(f"[{mode}] scanned={scanned} touched={touched} replacements={total} errors={errors}")
     if not args.apply and total:
-        print("No files changed. Re-run with --apply after reviewing the plan.")
+        print("No files changed. Re-run against an isolated release candidate with --apply after review.")
     return 0 if errors == 0 else 2
 
 
