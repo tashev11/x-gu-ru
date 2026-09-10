@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and atomically switch x-gu.ru to a release directory.
-
-Dry-run by default. A production release must be a direct child of the releases
-root, contain its own index-policy manifest, pass structural validation and pass
-the strict offline pre-deploy SEO/policy gate before ``current`` is switched.
-"""
+"""Validate and atomically switch x-gu.ru to a self-contained release."""
 from __future__ import annotations
 
 import argparse
@@ -28,8 +23,8 @@ from predeploy_check import run_predeploy  # noqa: E402
 
 DEFAULT_RELEASES_ROOT = Path("/var/www/x-gu.ru/releases")
 DEFAULT_CURRENT = Path("/var/www/x-gu.ru/current")
-DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
 KEEP_FILENAME = ".xgu-index-keep.json"
+WHITELIST_FILENAME = ".xgu-whitelist.txt"
 CANONICAL_HOST = "x-gu.ru"
 
 
@@ -39,6 +34,7 @@ def _required_paths(release: Path) -> list[Path]:
         release / "robots.txt",
         release / "sitemap.xml",
         release / KEEP_FILENAME,
+        release / WHITELIST_FILENAME,
     ]
 
 
@@ -99,6 +95,11 @@ def _validate_sitemap_index(release: Path, sitemap: Path) -> list[str]:
     return errors
 
 
+def _valid_sha256(value: object) -> bool:
+    digest = str(value or "").strip().lower()
+    return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
+
+
 def _validate_keep_manifest(path: Path) -> list[str]:
     if not path.is_file():
         return [f"required release file missing: {KEEP_FILENAME}"]
@@ -114,11 +115,12 @@ def _validate_keep_manifest(path: Path) -> list[str]:
         errors.append(f"{KEEP_FILENAME} has no open_cities")
     if not payload.get("open_services"):
         errors.append(f"{KEEP_FILENAME} has no open_services")
-    if not str(payload.get("policy_source") or "").strip():
-        errors.append(f"{KEEP_FILENAME} has no policy_source")
-    digest = str(payload.get("policy_sha256") or "").strip().lower()
-    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-        errors.append(f"{KEEP_FILENAME} has invalid policy_sha256")
+    for key in ("policy_source", "whitelist_source"):
+        if not str(payload.get(key) or "").strip():
+            errors.append(f"{KEEP_FILENAME} has no {key}")
+    for key in ("policy_sha256", "whitelist_sha256"):
+        if not _valid_sha256(payload.get(key)):
+            errors.append(f"{KEEP_FILENAME} has invalid {key}")
     return errors
 
 
@@ -187,7 +189,6 @@ def main() -> int:
     parser.add_argument("release_dir", type=Path, help="fully built release directory")
     parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
     parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
-    parser.add_argument("--whitelist", type=Path, default=DEFAULT_WHITELIST)
     parser.add_argument("--base-url", default="https://x-gu.ru")
     parser.add_argument(
         "--unsafe-skip-predeploy",
@@ -212,7 +213,7 @@ def main() -> int:
         ok, gate_errors, _audit = run_predeploy(
             release,
             keep_config=release / KEEP_FILENAME,
-            whitelist=args.whitelist.resolve(),
+            whitelist=release / WHITELIST_FILENAME,
             base_url=args.base_url,
         )
         if not ok:
@@ -255,7 +256,7 @@ def main() -> int:
         print(f"rollback target: {previous}")
         print(
             f"rollback command: {sys.executable} {Path(__file__).name} {previous} "
-            f"--releases-root {releases_root} --current {current} --whitelist {args.whitelist} --apply"
+            f"--releases-root {releases_root} --current {current} --apply"
         )
     return 0
 
