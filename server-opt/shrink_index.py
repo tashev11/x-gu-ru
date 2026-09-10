@@ -19,6 +19,8 @@ import shutil
 import sys
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlparse
+
 
 DEFAULT_WEB_ROOT = Path("/var/www/x-gu.ru/current")
 DEFAULT_WHITELIST = Path("/opt/p3-app/data/whitelist.txt")
@@ -26,6 +28,8 @@ DEFAULT_KEEP_CONFIG = Path("/opt/p3-app/data/index_keep_config.json")
 DEFAULT_POLICY = Path(os.getenv("XGU_INDEX_POLICY", "/opt/p3-app/data/index_policy.json"))
 BUNDLED_BASELINE = Path(__file__).resolve().with_name("index_policy.baseline.json")
 BASE = "https://x-gu.ru"
+CANONICAL_HOST = "x-gu.ru"
+SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 NOINDEX_TAG = '<meta name="robots" content="noindex, follow">'
 INDEX_TAG = (
@@ -37,6 +41,12 @@ INDEX_TAG = (
 def _dedupe(values: list[object]) -> list[str]:
     cleaned = [str(value).strip() for value in values if str(value).strip()]
     return list(dict.fromkeys(cleaned))
+
+
+def _validate_slugs(values: list[str], label: str) -> None:
+    invalid = [value for value in values if SLUG_RE.fullmatch(value) is None]
+    if invalid:
+        raise SystemExit(f"Invalid {label} slug(s): {', '.join(invalid[:10])}")
 
 
 def _policy_digest(cities: list[str], services: list[str]) -> str:
@@ -52,16 +62,29 @@ def _policy_digest(cities: list[str], services: list[str]) -> str:
 def _load_policy_file(path: Path, *, allow_example: bool = False) -> tuple[list[str], list[str]]:
     if not path.is_file():
         raise SystemExit(f"Policy file not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"Policy file is invalid JSON: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise SystemExit("Policy root must be a JSON object")
     if payload.get("example_only") and not allow_example:
         raise SystemExit(
             f"Refusing example-only policy: {path}. Copy it to a reviewed production policy, "
             "set example_only=false, and record the review source/date."
         )
+    if not payload.get("example_only"):
+        if not str(payload.get("reviewed_at") or "").strip():
+            raise SystemExit("Production policy must contain reviewed_at")
+        if not str(payload.get("source_note") or "").strip():
+            raise SystemExit("Production policy must contain source_note")
+
     cities = _dedupe(list(payload.get("open_cities") or []))
     services = _dedupe(list(payload.get("open_services") or []))
     if not cities or not services:
         raise SystemExit("Policy must contain non-empty open_cities and open_services")
+    _validate_slugs(cities, "city")
+    _validate_slugs(services, "service")
     return cities, services
 
 
@@ -81,6 +104,28 @@ def load_policy(path: Path | None, *, use_builtin: bool = False) -> tuple[list[s
     return cities, services, str(path.resolve()), _policy_digest(cities, services)
 
 
+def _canonical_whitelist_url(value: str) -> str:
+    value = value.strip()
+    if value.startswith("/"):
+        value = BASE + value
+    parsed = urlparse(value)
+    if parsed.scheme != "https" or parsed.netloc != CANONICAL_HOST:
+        raise SystemExit(f"Whitelist URL must use canonical https://{CANONICAL_HOST}: {value}")
+    if parsed.query or parsed.fragment:
+        raise SystemExit(f"Whitelist URL must not contain query/fragment: {value}")
+
+    decoded_parts = [unquote(part) for part in parsed.path.split("/") if part]
+    if any(part in {".", ".."} for part in decoded_parts):
+        raise SystemExit(f"Whitelist URL contains path traversal segment: {value}")
+
+    path = parsed.path or "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    if path != "/" and not path.endswith("/"):
+        path += "/"
+    return BASE + path
+
+
 def url_for(html: Path, web_root: Path) -> str:
     rel = html.parent.relative_to(web_root)
     if str(rel) == ".":
@@ -94,11 +139,18 @@ def build_keep_urls(whitelist: Path, open_cities: list[str], open_services: list
             f"Whitelist not found: {whitelist}. Refusing index-core changes because protected URLs are unknown."
         )
 
+    _validate_slugs(open_cities, "city")
+    _validate_slugs(open_services, "service")
+
     keep: set[str] = set()
-    for line in whitelist.read_text(encoding="utf-8").splitlines():
-        url = line.strip()
-        if url:
-            keep.add(url if url.endswith("/") else url + "/")
+    for line_number, line in enumerate(whitelist.read_text(encoding="utf-8", errors="strict").splitlines(), start=1):
+        value = line.strip()
+        if not value:
+            continue
+        try:
+            keep.add(_canonical_whitelist_url(value))
+        except SystemExit as exc:
+            raise SystemExit(f"Invalid whitelist line {line_number}: {exc}") from exc
 
     keep.add(f"{BASE}/")
     keep.add(f"{BASE}/privacy/")
