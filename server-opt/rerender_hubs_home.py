@@ -23,7 +23,7 @@ sys.path.insert(0, str(APP_ROOT))
 os.chdir(APP_ROOT)
 
 from app.core.config import settings  # noqa: E402
-from content_generator import _homepage_cities, _render_city_hub_html, _template_env  # noqa: E402
+from app.services.content_generator import _homepage_cities, _render_city_hub_html, _template_env  # noqa: E402
 from release_safety import (  # noqa: E402
     DEFAULT_CURRENT,
     DEFAULT_RELEASES_ROOT,
