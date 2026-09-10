@@ -53,9 +53,22 @@ def mutation_target_error(
     return None
 
 
-def atomic_replace_text(path: Path, text: str, *, encoding: str = "utf-8") -> None:
-    """Replace one text file atomically while preserving its permission bits."""
-    mode = path.stat().st_mode & 0o777
+def atomic_replace_text(
+    path: Path,
+    text: str,
+    *,
+    encoding: str = "utf-8",
+    default_mode: int = 0o644,
+) -> None:
+    """Atomically replace or create one text file.
+
+    Existing permission bits are preserved. New files use ``default_mode``.
+    The parent directory must already exist so callers cannot accidentally
+    create an unexpected directory tree through a typo.
+    """
+    if not path.parent.is_dir():
+        raise FileNotFoundError(f"parent directory does not exist: {path.parent}")
+    mode = (path.stat().st_mode & 0o777) if path.exists() else default_mode
     temp = path.with_name(f".{path.name}.next.{os.getpid()}.{time.time_ns()}")
     try:
         temp.write_text(text, encoding=encoding)
