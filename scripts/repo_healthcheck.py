@@ -34,6 +34,7 @@ PRODUCTION_MUTATORS = (
     "server-opt/deploy_release.py",
     "server-opt/prune_releases.py",
     "server-opt/install_generator_facade.py",
+    "server-opt/bootstrap_release_layout.py",
 )
 
 RELEASE_FIRST_MUTATORS = (
@@ -67,6 +68,7 @@ TEST_FILES = (
     "tests/test_predeploy_check.py",
     "tests/test_release_safety.py",
     "tests/test_purge_closed_pages.py",
+    "tests/test_bootstrap_release_layout.py",
 )
 
 
@@ -129,6 +131,11 @@ def check_generator(failures: list[str]) -> None:
             ("XGU_ALLOW_LEGACY_WHITELIST", "legacy whitelist is not explicitly gated"),
             ("XGU_ALLOW_MISSING_KEEP_CONFIG", "missing-policy migration override missing"),
             ("hashlib.sha256(whitelist.read_bytes()).hexdigest()", "generator does not verify release whitelist hash"),
+            ("_safe_landing_variants", "generator does not suppress legacy testimonial cards before render"),
+            ('variants["review_cards"] = []', "legacy review cards are not disabled before render"),
+            ("_disabled_review_variant", "legacy deterministic review object is not disabled"),
+            ("_legacy._landing_variants = _safe_landing_variants", "legacy landing renderer does not use safe variants"),
+            ("_legacy._review_variant = _disabled_review_variant", "legacy renderer can still generate fake review data"),
             ("_sanitize_generated_html", "generated HTML sanitizer missing"),
             ('key in {"aggregateRating", "review"}', "rating/review schema sanitizer missing"),
             ('payload.get("@type") == "LocalBusiness"', "generated LocalBusiness sanitizer missing"),
@@ -319,6 +326,7 @@ def check_release_ops(failures: list[str]) -> None:
     deploy = read_text("server-opt/deploy_release.py", failures)
     prune = read_text("server-opt/prune_releases.py", failures)
     installer = read_text("server-opt/install_generator_facade.py", failures)
+    bootstrap = read_text("server-opt/bootstrap_release_layout.py", failures)
     disk = read_text("server-opt/disk-autoclean.sh", failures)
 
     require_tokens(
@@ -348,6 +356,20 @@ def check_release_ops(failures: list[str]) -> None:
             ("--unsafe-skip-predeploy", "predeploy bypass is not explicitly emergency-only"),
             ("is not a symlink", "deploy no longer refuses a real current directory"),
             ("rollback target", "deploy no longer reports rollback target"),
+        ),
+        failures,
+    )
+
+    require_tokens(
+        bootstrap,
+        (
+            ("Dry-run by default", "bootstrap migration is not documented as dry-run first"),
+            ("current is already a symlink", "bootstrap can run against an already-migrated current"),
+            ("same filesystem", "bootstrap does not require same-filesystem atomic rename"),
+            ("os.rename(current, release)", "bootstrap does not move current with same-filesystem rename"),
+            ("os.replace(temp_link, current)", "bootstrap does not install current symlink atomically after rename"),
+            ("automatic rollback also failed", "bootstrap does not report catastrophic rollback failure"),
+            ("controlled maintenance window", "bootstrap apply is not clearly maintenance-window only"),
         ),
         failures,
     )
@@ -451,6 +473,7 @@ def check_repository_shape(failures: list[str]) -> None:
         ".github/workflows/ci.yml",
         "release_safety.py",
         "server-opt/predeploy_check.py",
+        "server-opt/bootstrap_release_layout.py",
         "server-opt/PRODUCTION_DEPLOY_RUNBOOK.md",
     ):
         read_text(rel_path, failures)
@@ -461,7 +484,8 @@ def check_repository_shape(failures: list[str]) -> None:
     require("SEOHC_REQUIRE_POLICY=true" in env_example, ".env.example does not document fail-closed SEO policy", failures)
 
     runbook = read_text("server-opt/PRODUCTION_DEPLOY_RUNBOOK.md", failures)
-    require("STOP: current is not a symlink" in runbook, "production runbook does not stop on legacy current directory", failures)
+    require("STOP: current is not a symlink" in runbook, "production runbook does not detect legacy current directory", failures)
+    require("bootstrap_release_layout.py" in runbook, "production runbook has no guarded first-migration path", failures)
     require("python scripts/validate_repo.py" in runbook, "production runbook skips repository validation", failures)
     require("deploy_release.py \"$RELEASE\" --apply" in runbook, "production runbook has no atomic release switch", failures)
 
@@ -488,6 +512,7 @@ def main() -> int:
     print("Repository healthcheck: OK")
     print("  templates synchronized and canonical")
     print("  generator policy + whitelist follow the active release")
+    print("  fabricated testimonial data is disabled before render and sanitized after render")
     print("  legacy global policy/whitelist require explicit migration flags")
     print("  backend maintenance imports the installed app.services generator")
     print("  shared city morphology is enforced")
@@ -496,6 +521,7 @@ def main() -> int:
     print("  release-first mutators reject active current and avoid direct text writes")
     print("  homepage/open-hub rerenders are candidate-policy constrained")
     print("  purge requires index.html + noindex and re-checks active release")
+    print("  guarded bootstrap supports first directory->symlink migration")
     print("  deploy validates self-contained release before atomic switch")
     print("  production runbook requires read-only discovery before rollout")
     print("  release pruning re-checks current immediately before deletion")
