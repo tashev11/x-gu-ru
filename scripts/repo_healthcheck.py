@@ -365,8 +365,10 @@ def check_release_ops(failures: list[str]) -> None:
         (
             ("Dry-run by default", "bootstrap migration is not documented as dry-run first"),
             ("current is already a symlink", "bootstrap can run against an already-migrated current"),
-            ("same filesystem", "bootstrap does not require same-filesystem atomic rename"),
-            ("os.rename(current, release)", "bootstrap does not move current with same-filesystem rename"),
+            ("target release is missing required non-empty file", "bootstrap does not require a self-contained target"),
+            ("run_predeploy(", "bootstrap does not run strict predeploy on its target"),
+            ("different filesystems", "bootstrap does not enforce same-filesystem legacy backup rename"),
+            ("os.rename(current, backup_release)", "bootstrap does not archive legacy current before cutover"),
             ("os.replace(temp_link, current)", "bootstrap does not install current symlink atomically after rename"),
             ("automatic rollback also failed", "bootstrap does not report catastrophic rollback failure"),
             ("controlled maintenance window", "bootstrap apply is not clearly maintenance-window only"),
@@ -485,7 +487,7 @@ def check_repository_shape(failures: list[str]) -> None:
 
     runbook = read_text("server-opt/PRODUCTION_DEPLOY_RUNBOOK.md", failures)
     require("STOP: current is not a symlink" in runbook, "production runbook does not detect legacy current directory", failures)
-    require("bootstrap_release_layout.py" in runbook, "production runbook has no guarded first-migration path", failures)
+    require("bootstrap_release_layout.py \"$RELEASE\"" in runbook, "production runbook has no guarded first-migration path", failures)
     require("python scripts/validate_repo.py" in runbook, "production runbook skips repository validation", failures)
     require("deploy_release.py \"$RELEASE\" --apply" in runbook, "production runbook has no atomic release switch", failures)
 
@@ -521,7 +523,7 @@ def main() -> int:
     print("  release-first mutators reject active current and avoid direct text writes")
     print("  homepage/open-hub rerenders are candidate-policy constrained")
     print("  purge requires index.html + noindex and re-checks active release")
-    print("  guarded bootstrap supports first directory->symlink migration")
+    print("  guarded bootstrap switches only to a validated self-contained candidate")
     print("  deploy validates self-contained release before atomic switch")
     print("  production runbook requires read-only discovery before rollout")
     print("  release pruning re-checks current immediately before deletion")
