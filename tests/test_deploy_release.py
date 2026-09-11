@@ -60,13 +60,15 @@ class DeployReleaseTests(unittest.TestCase):
             }
         normalized = normalize_policy_payload(policy_fields)
         (release / deploy_release.KEEP_FILENAME).write_text(
-            json.dumps({
-                **policy_fields,
-                "policy_source": "/reviewed/index_policy.json",
-                "policy_sha256": policy_digest(normalized),
-                "whitelist_source": "/reviewed/whitelist.txt",
-                "whitelist_sha256": whitelist_digest,
-            }),
+            json.dumps(
+                {
+                    **policy_fields,
+                    "policy_source": "/reviewed/index_policy.json",
+                    "policy_sha256": policy_digest(normalized),
+                    "whitelist_source": "/reviewed/whitelist.txt",
+                    "whitelist_sha256": whitelist_digest,
+                }
+            ),
             encoding="utf-8",
         )
         self._finalize(release)
@@ -97,6 +99,7 @@ class DeployReleaseTests(unittest.TestCase):
             keep.write_text(json.dumps(payload), encoding="utf-8")
             errors = deploy_release.validate_release(release)
             self.assertTrue(any("policy is invalid" in error for error in errors))
+            self.assertTrue(any("release content SHA-256 mismatch" in error for error in errors))
 
     def test_stale_policy_digest_is_rejected_structurally(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -108,25 +111,57 @@ class DeployReleaseTests(unittest.TestCase):
             keep.write_text(json.dumps(payload), encoding="utf-8")
             errors = deploy_release.validate_release(release)
             self.assertTrue(any("policy SHA-256 mismatch" in error for error in errors))
+            self.assertTrue(any("release content SHA-256 mismatch" in error for error in errors))
 
     def test_invalid_keep_manifest_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             release = self._release(Path(temp), "candidate")
             (release / deploy_release.KEEP_FILENAME).write_text(
-                json.dumps({
-                    "policy_version": 1,
-                    "open_cities": ["moskva"],
-                    "open_services": ["seo-audit-saita"],
-                    "policy_source": "reviewed",
-                    "policy_sha256": "bad",
-                    "whitelist_source": "reviewed",
-                    "whitelist_sha256": "bad",
-                }),
+                json.dumps(
+                    {
+                        "policy_version": 1,
+                        "open_cities": ["moskva"],
+                        "open_services": ["seo-audit-saita"],
+                        "policy_source": "reviewed",
+                        "policy_sha256": "bad",
+                        "whitelist_source": "reviewed",
+                        "whitelist_sha256": "bad",
+                    }
+                ),
                 encoding="utf-8",
             )
             errors = deploy_release.validate_release(release)
             self.assertTrue(any("invalid policy_sha256" in error for error in errors))
             self.assertTrue(any("invalid whitelist_sha256" in error for error in errors))
+
+    def test_structural_validation_rejects_whitelist_hash_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            release = self._release(Path(temp), "candidate")
+            whitelist = release / deploy_release.WHITELIST_FILENAME
+            whitelist.write_text("https://x-gu.ru/tver/\n", encoding="utf-8")
+            errors = deploy_release.validate_release(release)
+            self.assertTrue(any("whitelist SHA-256 mismatch" in error for error in errors))
+            self.assertTrue(any("release content SHA-256 mismatch" in error for error in errors))
+
+    def test_emergency_skip_still_rejects_tampered_finalized_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            releases = root / "releases"
+            releases.mkdir()
+            release = self._release(releases, "candidate")
+            (release / "index.html").write_text(
+                "<html><head><title>tampered</title></head></html>",
+                encoding="utf-8",
+            )
+            code, errors, audit = deploy_release._validate_candidate(
+                release,
+                releases,
+                "https://x-gu.ru",
+                True,
+            )
+            self.assertEqual(code, 2)
+            self.assertIsNone(audit)
+            self.assertTrue(any("release content SHA-256 mismatch" in error for error in errors))
 
     def test_atomic_switch_returns_previous_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -182,6 +217,7 @@ class DeployReleaseTests(unittest.TestCase):
                 '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>',
                 encoding="utf-8",
             )
+            self._finalize(release)
             errors = deploy_release.validate_release(release, releases_root=releases)
             self.assertEqual(errors, [])
 
