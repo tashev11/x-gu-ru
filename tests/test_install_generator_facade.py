@@ -85,6 +85,36 @@ class InstallGeneratorFacadeTests(unittest.TestCase):
             for name in installer.REQUIRED_FILES:
                 self.assertEqual((dest / name).read_text(encoding="utf-8"), f"VALUE = 'old:{name}'\n")
 
+    def test_symlink_live_target_is_rejected_before_backup_or_replace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self._sources(root)
+            dest = self._dest(root)
+            target = dest / "content_generator.py"
+            target.unlink()
+            outside = root / "outside.py"
+            outside.write_text("VALUE = 'outside'\n", encoding="utf-8")
+            target.symlink_to(outside)
+
+            with self.assertRaisesRegex(ValueError, "symlink generator target"):
+                installer.install_set(source, dest, ".bak.test")
+            self.assertEqual(outside.read_text(encoding="utf-8"), "VALUE = 'outside'\n")
+            self.assertTrue(target.is_symlink())
+
+    def test_existing_backup_is_never_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = self._sources(root)
+            dest = self._dest(root)
+            backup = dest / "content_generator.py.bak.test"
+            backup.write_text("KEEP THIS BACKUP\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(FileExistsError, "refusing to overwrite existing backup"):
+                installer.install_set(source, dest, ".bak.test")
+            self.assertEqual(backup.read_text(encoding="utf-8"), "KEEP THIS BACKUP\n")
+            for name in installer.REQUIRED_FILES:
+                self.assertEqual((dest / name).read_text(encoding="utf-8"), f"VALUE = 'old:{name}'\n")
+
 
 if __name__ == "__main__":
     unittest.main()
