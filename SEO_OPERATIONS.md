@@ -33,6 +33,7 @@ python server-opt/seo_snapshot.py \
 - `index_policy.v2.candidate.json` — review-only exact-pair policy;
 - `index_policy.v2.review.json` — причины включения/отклонения пар;
 - `gsc_cannibalization.json` — query→page conflicts;
+- `gsc_opportunities.json` — страницы с быстрым потенциалом роста и закрытые URL с GSC-сигналом;
 - `cannibalization.review.json` — review-план конкурирующих URL;
 - `seo_action_queue.json` — итоговая очередь действий;
 - `snapshot_manifest.json` — дата, tooling Git SHA, root и статус каждого снимка.
@@ -41,21 +42,25 @@ python server-opt/seo_snapshot.py \
 
 ## Итоговая очередь действий
 
-`server-opt/seo_action_queue.py` объединяет coverage, качество, crawl graph, metadata/intent overlap и cannibalization review.
+`server-opt/seo_action_queue.py` объединяет coverage, качество, crawl graph, metadata/intent overlap, GSC opportunities и cannibalization review.
 
 Основные действия:
 
 - `CANNIBALIZATION_REVIEW` — несколько URL одного города делят запросы; сначала проверить интент;
 - `IMPROVE_OPEN_PAGE` — URL уже индексируется и имеет спрос, но у страницы жёсткий quality defect;
 - `IMPROVE_BEFORE_OPEN` — спрос есть у закрытого URL, но качество пока не позволяет открывать;
+- `EVIDENCE_MISMATCH_REVIEW` — query+page GSC видит сигнал у закрытого URL, а основной evidence/coverage его не подтверждает; сначала проверить расхождение источников;
 - `OPEN_REVIEW` — закрытая пара имеет search signal и достаточное качество;
 - `INTENT_REVIEW` — мета/поисковое обещание подозрительно пересекается с другой услугой;
 - `INTERNAL_LINKING` — открытый URL недостижим от главной или слишком глубокий;
+- `SNIPPET_REVIEW` — страница уже находится высоко, но CTR заметно слабее заданного порога;
+- `STRIKING_DISTANCE` — URL находится примерно на позициях 8–20 и имеет показы; кандидат на усиление;
+- `CONTENT_GROWTH` — URL имеет поисковую видимость, но находится глубже и требует содержательного усиления;
 - `CLOSE_REVIEW` — URL открыт, но в текущем evidence window не имеет qualifying signal;
 - `QUALITY_AUDIT` — спрос есть, но quality evidence отсутствует;
 - `KEEP` — текущее состояние не требует более приоритетного review.
 
-**Это очередь для человека, а не автомат SEO-изменений.** `CLOSE_REVIEW` не означает «сразу noindex», а `OPEN_REVIEW` не означает «сразу index».
+**Это очередь для человека, а не автомат SEO-изменений.** `CLOSE_REVIEW` не означает «сразу noindex», а `OPEN_REVIEW` не означает «сразу index`.
 
 ## Как читать `index_coverage_review.py`
 
@@ -80,6 +85,21 @@ open_pair_signal_coverage_ratio
 ```
 
 Например, если открыто 700 pair pages, а текущий search/manual signal есть только у 210, coverage ratio = 0.30. Это не команда закрыть остальные 490 страниц, но сильный повод проверить их по более длинному окну, сезонности, backlinks, конверсиям и истории.
+
+## GSC opportunities
+
+`server-opt/gsc_opportunity_report.py` использует GSC в разрезе `query + page` и ранжирует страницы по практической возможности роста.
+
+Основные категории:
+
+- `SNIPPET_REVIEW` — много показов, позиция уже в топ-10, CTR ниже порога; сначала проверяются Title/Description, SERP-интент и соответствие сниппета запросам;
+- `STRIKING_DISTANCE` — средняя позиция примерно 8–20; обычно это хороший кандидат на усиление контента, внутренних ссылок и интента;
+- `CONTENT_GROWTH` — видимость уже есть, но позиция глубже;
+- `CLOSED_SIGNAL_REVIEW` — policy закрывает URL, но Google продолжает показывать его по запросам; это review-сигнал, не команда автоматически открыть страницу.
+
+Opportunity-report не меняет robots, canonical, policy или content.
+
+Если `CLOSED_SIGNAL_REVIEW` противоречит `search_evidence/index_coverage`, итоговая очередь повышает URL до `EVIDENCE_MISMATCH_REVIEW`, чтобы расхождение не потерялось.
 
 ## Метаданные и интенты
 
@@ -117,7 +137,7 @@ seo_snapshot.py
   ↓
 review seo_action_queue.json
   ↓
-ручные решения по OPEN/CLOSE/IMPROVE/CANNIBALIZATION
+ручные решения по OPEN/CLOSE/IMPROVE/GROWTH/CANNIBALIZATION
   ↓
 reviewed index_policy.json v2
   ↓
