@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
+from datetime import date
 from pathlib import Path
 
 
@@ -153,6 +154,42 @@ class BuildPairPolicyTests(unittest.TestCase):
         )
         self.assertEqual(policy["open_pairs"], [])
         self.assertGreaterEqual(review["counts"]["rejected_non_pair_url"], 1)
+
+    def test_freshness_accepts_matching_recent_evidence_and_quality(self) -> None:
+        evidence = {"generated_at": "2026-09-10"}
+        quality = {
+            "generated_at": "2026-09-11",
+            "source_evidence_generated_at": "2026-09-10",
+        }
+        result = mod.validate_input_freshness(
+            evidence,
+            quality,
+            max_age_days=14,
+            today=date(2026, 9, 11),
+        )
+        self.assertEqual(result["evidence_age_days"], 1)
+        self.assertEqual(result["quality_age_days"], 0)
+
+    def test_stale_evidence_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "search evidence is stale"):
+            mod.validate_input_freshness(
+                {"generated_at": "2026-08-01"},
+                None,
+                max_age_days=14,
+                today=date(2026, 9, 11),
+            )
+
+    def test_quality_from_different_evidence_snapshot_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "different search evidence snapshot"):
+            mod.validate_input_freshness(
+                {"generated_at": "2026-09-10"},
+                {
+                    "generated_at": "2026-09-11",
+                    "source_evidence_generated_at": "2026-09-09",
+                },
+                max_age_days=14,
+                today=date(2026, 9, 11),
+            )
 
 
 if __name__ == "__main__":
