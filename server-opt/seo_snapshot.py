@@ -52,6 +52,23 @@ def _tooling_revision() -> str:
         return ""
 
 
+def prepare_snapshots_root(path: Path) -> Path:
+    """Create the report root safely when only its real parent already exists."""
+    path = path.absolute()
+    if path.exists() or path.is_symlink():
+        if path.is_symlink():
+            raise RuntimeError(f"refusing symlink snapshots root: {path}")
+        if not path.is_dir():
+            raise RuntimeError(f"snapshots root is not a directory: {path}")
+        return path
+
+    parent = path.parent
+    if not parent.is_dir() or parent.is_symlink():
+        raise RuntimeError(f"snapshots root parent must be an existing real directory: {parent}")
+    path.mkdir(mode=0o750)
+    return path
+
+
 def build_steps(
     *,
     python: str,
@@ -241,16 +258,18 @@ def main() -> int:
     if not args.root.is_dir():
         print(f"release root not found: {args.root}", file=sys.stderr)
         return 2
-    if not args.snapshots_root.is_dir():
-        print(f"snapshots root not found: {args.snapshots_root}", file=sys.stderr)
+    try:
+        snapshots_root = prepare_snapshots_root(args.snapshots_root)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
 
     name = args.name.strip() or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if "/" in name or name in {".", ".."}:
         print("invalid snapshot name", file=sys.stderr)
         return 2
-    out_dir = args.snapshots_root / name
-    if out_dir.exists():
+    out_dir = snapshots_root / name
+    if out_dir.exists() or out_dir.is_symlink():
         print(f"snapshot directory already exists: {out_dir}", file=sys.stderr)
         return 2
     out_dir.mkdir(mode=0o750)
@@ -268,7 +287,7 @@ def main() -> int:
         "days": args.days,
         "tooling_revision": _tooling_revision(),
         "report_writes_only": True,
-        "steps": [name for name, _command in steps],
+        "steps": [step_name for step_name, _command in steps],
         "status": "running",
     }
     (out_dir / "snapshot_manifest.json").write_text(
