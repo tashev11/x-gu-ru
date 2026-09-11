@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -20,7 +21,7 @@ for path in (str(SERVER_OPT), str(REPO_ROOT)):
 
 from index_policy import normalize_policy_payload, policy_digest  # noqa: E402
 from predeploy_check import run_predeploy  # noqa: E402
-from release_integrity import RELEASE_METADATA_FILENAME  # noqa: E402
+from release_integrity import RELEASE_METADATA_FILENAME, verify_release_metadata  # noqa: E402
 from release_safety import DEFAULT_RELEASE_LOCK, release_operation_lock  # noqa: E402
 
 
@@ -101,7 +102,7 @@ def _valid_sha256(value: object) -> bool:
     return len(digest) == 64 and all(char in "0123456789abcdef" for char in digest)
 
 
-def _validate_keep_manifest(path: Path) -> list[str]:
+def _validate_keep_manifest(path: Path, whitelist: Path) -> list[str]:
     if not path.is_file():
         return [f"required release file missing: {KEEP_FILENAME}"]
     try:
@@ -130,6 +131,12 @@ def _validate_keep_manifest(path: Path) -> list[str]:
         actual = policy_digest(policy)
         if actual != expected:
             errors.append(f"{KEEP_FILENAME} policy SHA-256 mismatch: manifest={expected} actual={actual}")
+
+    if whitelist.is_file() and _valid_sha256(payload.get("whitelist_sha256")):
+        expected = str(payload.get("whitelist_sha256")).strip().lower()
+        actual = hashlib.sha256(whitelist.read_bytes()).hexdigest()
+        if actual != expected:
+            errors.append(f"{KEEP_FILENAME} whitelist SHA-256 mismatch: manifest={expected} actual={actual}")
     return errors
 
 
@@ -160,8 +167,17 @@ def validate_release(release: Path, *, releases_root: Path | None = None) -> lis
         errors.extend(_validate_sitemap_index(release, sitemap))
 
     keep = release / KEEP_FILENAME
+    whitelist = release / WHITELIST_FILENAME
     if keep.is_file():
-        errors.extend(_validate_keep_manifest(keep))
+        errors.extend(_validate_keep_manifest(keep, whitelist))
+
+    # Finalized release integrity is mandatory even when the emergency caller
+    # explicitly skips the expensive SEO predeploy audit. The override must not
+    # turn into permission to deploy a release mutated after finalization.
+    if (release / RELEASE_METADATA_FILENAME).is_file():
+        _metadata, integrity_errors = verify_release_metadata(release)
+        errors.extend(integrity_errors)
+
     return list(dict.fromkeys(errors))
 
 
@@ -190,11 +206,19 @@ def switch_release(current: Path, release: Path, *, releases_root: Path) -> Path
     return previous
 
 
-def _validate_candidate(release: Path, releases_root: Path, base_url: str, unsafe_skip: bool) -> tuple[int, list[str], dict | None]:
+def _validate_candidate(
+    release: Path,
+    releases_root: Path,
+    base_url: str,
+    unsafe_skip: bool,
+) -> tuple[int, list[str], dict | None]:
     errors = validate_release(release, releases_root=releases_root)
     if errors:
         return 2, errors, None
     if unsafe_skip:
+        # Structural policy, embedded whitelist hash and finalized release
+        # fingerprint already passed in validate_release(). Only the heavier SEO
+        # healthcheck portion is skipped here.
         return 0, [], None
 
     ok, gate_errors, audit = run_predeploy(
@@ -216,7 +240,10 @@ def main() -> int:
     parser.add_argument(
         "--unsafe-skip-predeploy",
         action="store_true",
-        help="emergency-only override: skip strict SEO/integrity predeploy gate, not structural policy validation",
+        help=(
+            "emergency-only: skip the heavy SEO predeploy audit; release fingerprint, "
+            "policy digest and embedded whitelist hash remain mandatory"
+        ),
     )
     parser.add_argument("--apply", action="store_true", help="atomically switch current to release_dir")
     args = parser.parse_args()
@@ -234,7 +261,11 @@ def main() -> int:
                 print(f"  - {error}", file=sys.stderr)
             return code, None, audit
         if args.unsafe_skip_predeploy:
-            print("WARNING: strict pre-deploy gate skipped by emergency override; structural policy checks still passed", file=sys.stderr)
+            print(
+                "WARNING: heavy SEO predeploy audit skipped by emergency override; "
+                "release fingerprint + policy + whitelist integrity still passed",
+                file=sys.stderr,
+            )
         else:
             print("Strict pre-deploy gate: OK")
         previous = _current_target(current)
