@@ -40,6 +40,55 @@ def _city_from_url(url: str) -> str | None:
     return parts[0] if len(parts) == 1 else None
 
 
+def _parse_report_date(value: object, label: str) -> date:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError(f"{label} is missing")
+    try:
+        return date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(f"{label} is not ISO YYYY-MM-DD: {raw!r}") from exc
+
+
+def validate_input_freshness(
+    evidence_payload: dict,
+    quality_payload: dict | None,
+    *,
+    max_age_days: int = 14,
+    today: date | None = None,
+) -> dict:
+    if max_age_days < 0:
+        raise ValueError("max_age_days must be non-negative")
+    today = today or date.today()
+    evidence_date = _parse_report_date(evidence_payload.get("generated_at"), "search evidence generated_at")
+    evidence_age = (today - evidence_date).days
+    if evidence_age < 0:
+        raise ValueError("search evidence generated_at is in the future")
+    if evidence_age > max_age_days:
+        raise ValueError(f"search evidence is stale: age={evidence_age}d > {max_age_days}d")
+
+    result = {"evidence_age_days": evidence_age, "quality_age_days": None}
+    if quality_payload is None:
+        return result
+
+    quality_date = _parse_report_date(quality_payload.get("generated_at"), "pair quality generated_at")
+    quality_age = (today - quality_date).days
+    if quality_age < 0:
+        raise ValueError("pair quality generated_at is in the future")
+    if quality_age > max_age_days:
+        raise ValueError(f"pair quality report is stale: age={quality_age}d > {max_age_days}d")
+
+    quality_source = str(quality_payload.get("source_evidence_generated_at") or "").strip()
+    evidence_source = str(evidence_payload.get("generated_at") or "").strip()
+    if quality_source != evidence_source:
+        raise ValueError(
+            "pair quality report was built from a different search evidence snapshot: "
+            f"quality={quality_source!r} evidence={evidence_source!r}"
+        )
+    result["quality_age_days"] = quality_age
+    return result
+
+
 def _signal(record: dict, *, min_impressions: float, min_clicks: float) -> tuple[bool, list[str]]:
     reasons: list[str] = []
     if bool(record.get("manual_protected")):
@@ -163,6 +212,7 @@ def build_candidate(
     review = {
         "generated_at": date.today().isoformat(),
         "source_evidence_generated_at": evidence_payload.get("generated_at"),
+        "source_quality_generated_at": (quality_payload or {}).get("generated_at"),
         "quality_report_used": quality_payload is not None,
         "quality_required": require_quality,
         "thresholds": {
@@ -205,6 +255,7 @@ def main() -> int:
     parser.add_argument("--evidence", type=Path, default=DEFAULT_EVIDENCE)
     parser.add_argument("--quality", type=Path, default=DEFAULT_QUALITY)
     parser.add_argument("--skip-quality", action="store_true", help="build evidence-only candidate; review use only")
+    parser.add_argument("--max-input-age-days", type=int, default=14)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--review-out", type=Path, default=DEFAULT_REVIEW)
     parser.add_argument("--gsc-min-impressions", type=float, default=5.0)
@@ -212,8 +263,8 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true", help="write review-only candidate files")
     args = parser.parse_args()
 
-    if args.gsc_min_impressions < 0 or args.gsc_min_clicks < 0:
-        print("thresholds must be non-negative", file=sys.stderr)
+    if args.gsc_min_impressions < 0 or args.gsc_min_clicks < 0 or args.max_input_age_days < 0:
+        print("thresholds/age must be non-negative", file=sys.stderr)
         return 2
     if not args.evidence.is_file():
         print(f"Evidence file not found: {args.evidence}", file=sys.stderr)
@@ -228,6 +279,11 @@ def main() -> int:
     try:
         evidence = json.loads(args.evidence.read_text(encoding="utf-8", errors="strict"))
         quality = None if args.skip_quality else json.loads(args.quality.read_text(encoding="utf-8", errors="strict"))
+        freshness = validate_input_freshness(
+            evidence,
+            quality,
+            max_age_days=args.max_input_age_days,
+        )
         policy, review = build_candidate(
             evidence,
             quality_payload=quality,
@@ -235,12 +291,16 @@ def main() -> int:
             min_impressions=args.gsc_min_impressions,
             min_clicks=args.gsc_min_clicks,
         )
+        review["freshness"] = freshness
+        review["max_input_age_days"] = args.max_input_age_days
     except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
         print(f"Cannot build pair-policy candidate: {exc}", file=sys.stderr)
         return 2
 
     print("Pair-level SEO policy candidate")
     print(f"  evidence rows:              {review['counts']['evidence_rows']}")
+    print(f"  evidence age:               {freshness['evidence_age_days']}d")
+    print(f"  quality report age:         {freshness['quality_age_days']}d")
     print(f"  quality report used:        {review['quality_report_used']}")
     print(f"  city hubs:                  {review['counts']['candidate_city_hubs']}")
     print(f"  exact candidate pairs:      {review['counts']['candidate_pairs']}")
