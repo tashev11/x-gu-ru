@@ -3,7 +3,7 @@
 
 This tool never writes redirects, canonicals, robots directives, or policy. It
 ranks same-city competing pages and proposes a primary URL for human review.
-The recommendation combines search performance with hard page-quality status.
+The recommendation combines search performance with pair-quality status.
 """
 from __future__ import annotations
 
@@ -17,6 +17,19 @@ from pathlib import Path
 DEFAULT_CANNIBALIZATION = Path("/opt/p3-app/data/gsc_cannibalization.json")
 DEFAULT_QUALITY = Path("/opt/p3-app/data/pair_quality.json")
 DEFAULT_OUT = Path("/opt/p3-app/data/cannibalization.review.json")
+HARD_QUALITY_FLAGS = {
+    "missing_page",
+    "unreadable_page",
+    "html_parse_error",
+    "thin_content",
+    "missing_title",
+    "missing_description",
+    "missing_h1",
+    "missing_canonical",
+    "canonical_mismatch",
+    "invalid_jsonld",
+    "exact_duplicate",
+}
 
 
 def _quality_map(payload: dict) -> dict[str, dict]:
@@ -33,13 +46,22 @@ def _quality_map(payload: dict) -> dict[str, dict]:
     return result
 
 
+def _quality_state(row: dict | None) -> str:
+    if not row:
+        return "missing_quality"
+    return str(row.get("quality_state") or row.get("status") or "unknown").strip()
+
+
 def _hard_fail(row: dict | None) -> bool:
     if not row:
         return True
-    if str(row.get("status") or "").strip() == "improve_before_index":
+    if _quality_state(row) == "improve_before_index":
         return True
-    hard = row.get("hard_failures") or row.get("hard_reasons") or []
-    return bool(hard)
+    explicit = row.get("hard_failures") or row.get("hard_reasons") or []
+    if explicit:
+        return True
+    flags = {str(flag) for flag in (row.get("flags") or [])}
+    return bool(flags & HARD_QUALITY_FLAGS)
 
 
 def _query_metric_index(cannibalization: dict) -> dict[tuple[str, str], dict[str, float]]:
@@ -95,8 +117,6 @@ def _score(metrics: dict[str, float], quality: dict | None) -> tuple[int, float,
     impressions = metrics["impressions"]
     clicks = metrics["clicks"]
     position = metrics["position_weight"] / impressions if impressions else 999.0
-    # A clean page always beats a hard-failing page. Search performance then
-    # breaks ties: clicks, impressions, and finally better average position.
     return (0 if hard_fail else 1, clicks, impressions, -position)
 
 
@@ -130,7 +150,8 @@ def build_review(cannibalization: dict, quality_payload: dict) -> dict:
             candidates.append(
                 {
                     "url": url,
-                    "quality_status": (q or {}).get("status", "missing_quality"),
+                    "quality_status": _quality_state(q),
+                    "quality_flags": list((q or {}).get("flags") or []),
                     "hard_quality_fail": _hard_fail(q),
                     "impressions": impressions,
                     "clicks": metrics["clicks"],
@@ -144,7 +165,7 @@ def build_review(cannibalization: dict, quality_payload: dict) -> dict:
         primary = ranked[0]
         alternatives = ranked[1:]
         confidence = "review"
-        if primary["quality_status"] == "missing_quality" or primary["metric_source"] != "query_conflicts":
+        if primary["quality_status"] in {"missing_quality", "unknown"} or primary["metric_source"] != "query_conflicts":
             confidence = "low"
         if primary["hard_quality_fail"]:
             confidence = "fix-first"
