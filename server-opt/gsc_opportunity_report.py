@@ -111,15 +111,15 @@ def analyze_rows(
         elif avg_position <= snippet_max_position and ctr <= max_snippet_ctr:
             category = "SNIPPET_REVIEW"
             score = impressions * max(0.0, max_snippet_ctr - ctr + 0.001) * 100.0
+        elif avg_position < striking_min_position:
+            category = "STRONG_PAGE"
+            score = impressions * max(ctr, 0.001)
         elif striking_min_position <= avg_position <= striking_max_position:
             category = "STRIKING_DISTANCE"
             score = impressions * max(0.1, (striking_max_position + 1.0 - avg_position) / striking_max_position)
         elif avg_position <= content_max_position:
             category = "CONTENT_GROWTH"
             score = impressions * max(0.05, (content_max_position + 1.0 - avg_position) / content_max_position)
-        elif avg_position < striking_min_position:
-            category = "STRONG_PAGE"
-            score = impressions * ctr
         else:
             category = "LOW_PRIORITY"
             score = impressions / max(avg_position, 1.0)
