@@ -1,0 +1,15 @@
+{
+  "policy_version": 2,
+  "example_only": true,
+  "reviewed_at": null,
+  "source_note": "Schema/example only. Build open_pairs from reviewed search demand and page-quality evidence before production use.",
+  "open_cities": [
+    "moskva",
+    "sankt-peterburg"
+  ],
+  "open_pairs": [
+    "moskva/prodvizhenie-saita",
+    "moskva/seo-audit-saita",
+    "sankt-peterburg/prodvizhenie-saita"
+  ]
+}

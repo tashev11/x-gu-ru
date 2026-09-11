@@ -1,78 +1,118 @@
 #!/usr/bin/env python3
-"""In-place fixes for deployed landing pages:
-  - website input type=url -> text (url type blocked submit without scheme)
-  - footer dead links -> on-page anchors / /privacy/ ; remove non-existent
-  - form privacy link -> /privacy/
-  - Telegram @avitobibot -> @tashev116
+"""Apply known idempotent fixes to generated landing pages.
 
-All replacements are exact static strings (idempotent: re-running is a no-op).
-Runs over every index.html; landing-specific strings are no-ops on hubs/home.
+Safe by default: the script reports planned replacements only. Apply must target
+an isolated release candidate unless an explicit emergency override allows the
+active current target.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
-ROOT = Path("/var/www/x-gu.ru/current")
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO_ROOT))
+
+from release_safety import (  # noqa: E402
+    DEFAULT_CURRENT,
+    DEFAULT_RELEASES_ROOT,
+    atomic_replace_text,
+    mutation_target_error,
+)
+
+
+DEFAULT_ROOT = DEFAULT_CURRENT
 FOOT = 'class="hover:text-blue-400 transition"'
 REPLACEMENTS = [
-    # website field
     ('type="url" id="website"', 'type="text" inputmode="url" id="website"'),
-    # footer "Услуги"
     (f'<a href="#" {FOOT}>Создание сайта</a>', f'<a href="#services" {FOOT}>Создание сайта</a>'),
     (f'<a href="#" {FOOT}>SEO Оптимизация</a>', f'<a href="#services" {FOOT}>SEO Оптимизация</a>'),
     (f'<a href="#" {FOOT}>Контекстная реклама</a>', f'<a href="#services" {FOOT}>Контекстная реклама</a>'),
     (f'<a href="#" {FOOT}>Автоматизация</a>', f'<a href="#services" {FOOT}>Автоматизация</a>'),
     (f'<a href="#" {FOOT}>SEO Аудит</a>', f'<a href="#audit" {FOOT}>SEO Аудит</a>'),
-    # footer "Компания"
     (f'<a href="#" {FOOT}>О нас</a>', f'<a href="#founder" {FOOT}>О нас</a>'),
     (f'<a href="#" {FOOT}>Кейсы</a>', f'<a href="#reviews" {FOOT}>Кейсы</a>'),
     (f'<a href="#" {FOOT}>Отзывы</a>', f'<a href="#reviews" {FOOT}>Отзывы</a>'),
-    (f'<li><a href="#" {FOOT}>Блог</a></li>', ''),  # remove (no page)
+    (f'<li><a href="#" {FOOT}>Блог</a></li>', ''),
     (f'<a href="#" {FOOT}>Контакты</a>', f'<a href="#contact" {FOOT}>Контакты</a>'),
-    # bottom legal
-    (f'<a href="#" {FOOT}>Политика конфиденциальности</a>', f'<a href="/privacy/" {FOOT}>Политика конфиденциальности</a>'),
-    (f'<a href="#" {FOOT}>Договор оферты</a>', ''),  # remove (no page)
-    # form consent link
-    ('<a href="#" class="text-blue-600 hover:underline">политикой конфиденциальности</a>',
-     '<a href="/privacy/" class="text-blue-600 hover:underline">политикой конфиденциальности</a>'),
-    # telegram handle (covers t.me/avitobibot and @avitobibot)
+    (
+        f'<a href="#" {FOOT}>Политика конфиденциальности</a>',
+        f'<a href="/privacy/" {FOOT}>Политика конфиденциальности</a>',
+    ),
+    (f'<a href="#" {FOOT}>Договор оферты</a>', ''),
+    (
+        '<a href="#" class="text-blue-600 hover:underline">политикой конфиденциальности</a>',
+        '<a href="/privacy/" class="text-blue-600 hover:underline">политикой конфиденциальности</a>',
+    ),
     ('avitobibot', 'tashev116'),
 ]
 
 
 def patch(text: str) -> tuple[str, int]:
-    n = 0
+    count = 0
     for old, new in REPLACEMENTS:
         if old in text:
-            cnt = text.count(old)
+            matches = text.count(old)
             text = text.replace(old, new)
-            n += cnt
-    return text, n
+            count += matches
+    return text, count
 
 
 def main() -> int:
-    if not ROOT.is_dir():
-        print(f"Root not found: {ROOT}", file=sys.stderr)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--apply", action="store_true", help="actually write changes")
+    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    parser.add_argument("--current", type=Path, default=DEFAULT_CURRENT)
+    parser.add_argument("--releases-root", type=Path, default=DEFAULT_RELEASES_ROOT)
+    parser.add_argument(
+        "--unsafe-allow-active-current",
+        action="store_true",
+        help="emergency override allowing writes directly to active current",
+    )
+    args = parser.parse_args()
+
+    if not args.root.is_dir():
+        print(f"Root not found: {args.root}", file=sys.stderr)
         return 1
+    if args.apply:
+        target_error = mutation_target_error(
+            args.root,
+            current=args.current,
+            releases_root=args.releases_root,
+            allow_active_current=args.unsafe_allow_active_current,
+        )
+        if target_error:
+            print(f"Refusing apply before scan/write: {target_error}", file=sys.stderr)
+            return 3
+
     scanned = touched = total = errors = 0
-    for html in ROOT.rglob("index.html"):
+    for html in args.root.rglob("index.html"):
         scanned += 1
         try:
-            text = html.read_text(encoding="utf-8")
-            new, n = patch(text)
-            if n:
-                html.write_text(new, encoding="utf-8")
+            text = html.read_text(encoding="utf-8", errors="strict")
+            new_text, replacements = patch(text)
+            if replacements:
                 touched += 1
-                total += n
-        except Exception as e:  # noqa: BLE001
+                total += replacements
+                if args.apply:
+                    atomic_replace_text(html, new_text)
+        except Exception as exc:  # noqa: BLE001
             errors += 1
-            print(f"  ERROR {html}: {e}", file=sys.stderr)
+            print(f"  ERROR {html}: {exc}", file=sys.stderr)
         if scanned % 5000 == 0:
-            print(f"  ... scanned={scanned} touched={touched} repl={total} errors={errors}", flush=True)
-    print(f"[DONE] scanned={scanned} touched={touched} repl={total} errors={errors}")
-    return 0
+            print(
+                f"  ... scanned={scanned} touched={touched} "
+                f"replacements={total} errors={errors}",
+                flush=True,
+            )
+
+    mode = "APPLIED" if args.apply else "DRY-RUN"
+    print(f"[{mode}] scanned={scanned} touched={touched} replacements={total} errors={errors}")
+    if not args.apply and total:
+        print("No files changed. Re-run against an isolated release candidate with --apply after review.")
+    return 0 if errors == 0 else 2
 
 
 if __name__ == "__main__":

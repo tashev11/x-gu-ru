@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>СЕО ГУРУ | Региональное SEO-продвижение</title>
     <link rel="canonical" href="https://{{ base_domain }}/">
-    <meta name="description" content="СЕО ГУРУ: региональное SEO-продвижение по России. Прозрачные тарифы и бесплатный аудит.">
+    <meta name="description" content="СЕО ГУРУ: региональное SEO-продвижение сайтов по всей России. Прозрачные тарифы, бесплатный аудит и рост позиций в поиске.">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">
     <meta property="og:type" content="website">
     <meta property="og:locale" content="ru_RU">
@@ -18,11 +18,11 @@
     <meta name="twitter:description" content="Публикуем страницы по городам и нишам с акцентом на заявки.">
     <meta name="twitter:image" content="https://tashev.ru/img/avatar.jpeg">
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","inLanguage":"ru-RU"}</script>
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","logo":"https://tashev.ru/img/avatar.jpeg","sameAs":["https://t.me/avitobibot"]}</script>
-    <script type="application/ld+json">{"@context":"https://schema.org","@type":"ProfessionalService","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","image":"https://tashev.ru/img/avatar.jpeg","areaServed":{"@type":"Country","name":"Россия"},"knowsAbout":["SEO продвижение","создание сайта","настройка рекламы","SEO аудит"],"sameAs":["https://t.me/avitobibot"]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","logo":"https://tashev.ru/img/avatar.jpeg","sameAs":["https://t.me/tashev116"]}</script>
+    <script type="application/ld+json">{"@context":"https://schema.org","@type":"ProfessionalService","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/","image":"https://tashev.ru/img/avatar.jpeg","areaServed":{"@type":"Country","name":"Россия"},"knowsAbout":["SEO продвижение","создание сайта","настройка рекламы","SEO аудит"],"sameAs":["https://t.me/tashev116"]}</script>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"Service","name":"Региональное SEO-продвижение","provider":{"@type":"Organization","name":"СЕО ГУРУ","url":"https://{{ base_domain }}/"},"areaServed":{"@type":"Country","name":"Россия"},"offers":{"@type":"Offer","price":"0","priceCurrency":"RUB","description":"Аудит и консультация бесплатно."}}</script>
     <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Сколько стоит SEO продвижение?","acceptedAnswer":{"@type":"Answer","text":"Аудит и консультация — 0 ₽, базовый пакет — 15 000 ₽ в месяц, комплексный — 50 000 ₽ в месяц."}},{"@type":"Question","name":"Для каких городов работаете?","acceptedAnswer":{"@type":"Answer","text":"Работаем по городам России и масштабируем посадочные страницы под региональный спрос."}},{"@type":"Question","name":"Что входит в работу?","acceptedAnswer":{"@type":"Answer","text":"Структура страниц, контент, техоптимизация, аналитика и контроль индексации."}}]}</script>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/assets/tailwind.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         * {
@@ -244,6 +244,7 @@
             <div class="glass rounded-3xl p-8 reveal">
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3 text-sm text-gray-400" id="cityGrid"></div>
             </div>
+            <div id="cityLinksSeo" class="sr-only" aria-hidden="true"></div>
         </div>
     </section>
 
@@ -331,7 +332,7 @@
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-400 mb-2">Сайт</label>
-                        <input id="leadWebsite" type="url" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition" placeholder="https://example.ru">
+                        <input id="leadWebsite" type="text" inputmode="url" class="w-full glass rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition" placeholder="например, tashev.ru">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-400 mb-2">Город</label>
@@ -377,7 +378,7 @@
                 <div>
                     <h4 class="text-white font-bold mb-4">Связь</h4>
                     <div class="space-y-2 text-sm text-gray-400">
-                        <p>Telegram: <a href="https://t.me/avitobibot" target="_blank" class="text-purple-300 hover:text-white transition">@avitobibot</a></p>
+                        <p>Telegram: <a href="https://t.me/tashev116" target="_blank" class="text-purple-300 hover:text-white transition">@tashev116</a></p>
                         <p>Email: hello@x-gu.ru</p>
                         <p>Время ответа: 9:00–21:00 (МСК)</p>
                     </div>
@@ -391,49 +392,46 @@
     </footer>
 
     <script>
-        const cities = [
-            "Abakan", "Achinsk", "Almetevsk", "Angarsk", "Arkhangelsk", "Armavir", "Artem", "Arzamas", "Astrakhan",
-            "Balakovo", "Balashikha", "Barnaul", "Bataisk", "Belgorod", "Berdsk", "Berezniki", "Biisk", "Blagoveshchensk",
-            "Bratsk", "Briansk", "Cheboksary", "Cheliabinsk", "Cherepovets", "Cherkessk", "Chita", "Derbent",
-            "Dimitrovgrad", "Dolgoprudnyi", "Domodedovo", "Dzerzhinsk", "Ekaterinburg", "Elektrostal", "Elista",
-            "Engels", "Essentuki", "Evpatoriia", "Groznyi", "Iakutsk", "Iaroslavl", "Ioshkar-Ola", "Irkutsk",
-            "Iuzhno-Sakhalinsk", "Ivanovo", "Izhevsk", "Kaliningrad", "Kaluga", "Kamensk-Uralskii", "Kamyshin",
-            "Kaspiisk", "Kazan", "Kemerovo", "Kerch", "Khabarovsk", "Khanty-Mansiisk", "Khasaviurt", "Khimki",
-            "Kirov", "Kislovodsk", "Kolomna", "Kolpino", "Komsomolsk-Na-Amure", "Kopeisk", "Korolev", "Kostroma",
-            "Kovrov", "Krasnodar", "Krasnogorsk", "Krasnoiarsk", "Kurgan", "Kursk", "Kyzyl", "Lipetsk", "Liubertsy",
-            "Magnitogorsk", "Maikop", "Makhachkala", "Miass", "Mikhailovsk", "Moskva", "Murmansk", "Murom",
-            "Mytishchi", "Naberezhnye-Chelny", "Nakhodka", "Nalchik", "Nazran", "Nefteiugansk", "Neftekamsk",
-            "Nevinnomyssk", "Nizhnekamsk", "Nizhnevartovsk", "Nizhnii-Novgorod", "Nizhnii-Tagil", "Noginsk",
-            "Noiabrsk", "Norilsk", "Novocheboksarsk", "Novocherkassk", "Novokuznetsk", "Novomoskovsk",
-            "Novorossiisk", "Novoshakhtinsk", "Novosibirsk", "Novyi-Urengoi", "Obninsk", "Odintsovo", "Oktiabrskii",
-            "Omsk", "Orekhovo-Zuevo", "Orel", "Orenburg", "Orsk", "Penza", "Perm", "Pervouralsk",
-            "Petropavlovsk-Kamchatskii", "Petrozavodsk", "Piatigorsk", "Podolsk", "Prokopevsk", "Pskov", "Pushkin",
-            "Pushkino", "Ramenskoe", "Reutov", "Riazan", "Rostov-Na-Donu", "Rubtsovsk", "Rybinsk", "Salavat",
-            "Samara", "Sankt-Peterburg", "Saransk", "Saratov", "Sergiev-Posad", "Serpukhov", "Sevastopol",
-            "Severodvinsk", "Seversk", "Shakhty", "Shchelkovo", "Simferopol", "Smolensk", "Sochi", "Staryi-Oskol",
-            "Stavropol", "Sterlitamak", "Surgut", "Syktyvkar", "Syzran", "Taganrog", "Tambov", "Tiumen", "Tobolsk",
-            "Toliatti", "Tomsk", "Tula", "Tver", "Ufa", "Ulan-Ude", "Ulianovsk", "Ussuriisk", "Velikii-Novgorod",
-            "Vidnoe", "Vladikavkaz", "Vladimir", "Vladivostok", "Volgodonsk", "Volgograd", "Vologda", "Volzhskii",
-            "Voronezh", "Zelenograd", "Zhukovskii", "Zlatoust"
-        ];
+        const cities = {{ cities_json | safe }};
 
         const cityGrid = document.getElementById('cityGrid');
         const citySearch = document.getElementById('citySearch');
 
         function renderCities(filter = "") {
             cityGrid.innerHTML = "";
-            const filtered = cities.filter(city => city.toLowerCase().includes(filter.toLowerCase()));
-            filtered.forEach(city => {
+            const q = filter.trim().toLowerCase();
+            if (!q) {
+                cityGrid.innerHTML = '<p class="col-span-full text-center text-gray-500 py-4">Начните вводить название города — найдём страницу для вашего региона</p>';
+                return;
+            }
+            const filtered = cities.filter(c => c.name.toLowerCase().includes(q));
+            if (!filtered.length) {
+                cityGrid.innerHTML = '<p class="col-span-full text-center text-gray-500 py-6">Город не найден</p>';
+                return;
+            }
+            filtered.slice(0, 60).forEach(c => {
                 const a = document.createElement('a');
-                a.href = `/${city.toLowerCase()}/`;
-                a.className = 'city-tag block text-center py-2 px-3 rounded-lg hover:bg-white/5';
-                a.textContent = city;
+                a.href = `/${c.slug}/`;
+                a.className = 'city-tag block text-center py-2.5 px-3 rounded-xl border border-white/5 hover:border-indigo-400/50 hover:bg-indigo-500/10 hover:text-white transition';
+                a.textContent = c.name;
                 cityGrid.appendChild(a);
             });
         }
 
         renderCities();
         citySearch.addEventListener('input', (e) => renderCities(e.target.value));
+
+        // SEO: keep all city links crawlable (hidden from view, present in DOM)
+        (function seoCityLinks() {
+            const host = document.getElementById('cityLinksSeo');
+            if (!host) return;
+            cities.forEach(c => {
+                const a = document.createElement('a');
+                a.href = `/${c.slug}/`;
+                a.textContent = c.name;
+                host.appendChild(a);
+            });
+        })();
 
         function reveal() {
             const reveals = document.querySelectorAll('.reveal');
@@ -508,5 +506,7 @@
             }
         });
     </script>
+    <!-- Виджет чата Эльки -->
+    <script src="https://app.l-ka.ru/widget/loader.js" data-site="st_e8b5e472b977bab7" async></script>
 </body>
 </html>
