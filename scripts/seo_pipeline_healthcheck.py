@@ -41,6 +41,7 @@ def main() -> int:
     graph = read("server-opt/link_graph_cluster_audit.py", failures)
     metadata = read("server-opt/metadata_intent_audit.py", failures)
     whitelist_lifecycle = read("server-opt/whitelist_lifecycle_report.py", failures)
+    action_queue = read("server-opt/seo_action_queue.py", failures)
     architecture = read("SEO_ARCHITECTURE.md", failures)
 
     for rel in (
@@ -53,6 +54,7 @@ def main() -> int:
         "tests/test_link_graph_cluster_audit.py",
         "tests/test_metadata_intent_audit.py",
         "tests/test_whitelist_lifecycle_report.py",
+        "tests/test_seo_action_queue.py",
     ):
         read(rel, failures)
 
@@ -159,6 +161,19 @@ def main() -> int:
         },
         failures,
     )
+    tokens(
+        action_queue,
+        {
+            "CANNIBALIZATION_REVIEW": "SEO action queue lost cannibalization review priority",
+            "IMPROVE_OPEN_PAGE": "SEO action queue lost live quality-fix priority",
+            "OPEN_REVIEW": "SEO action queue lost expansion review action",
+            "CLOSE_REVIEW": "SEO action queue lost contraction review action",
+            "INTERNAL_LINKING": "SEO action queue lost internal-linking action",
+            '"automatic_changes": False': "SEO action queue can mutate SEO state automatically",
+            "Never apply redirects/noindex/index solely from this queue": "SEO action queue lost human-review warning",
+        },
+        failures,
+    )
 
     for tool in (
         "index_coverage_review.py",
@@ -167,6 +182,7 @@ def main() -> int:
         "link_graph_cluster_audit.py",
         "metadata_intent_audit.py",
         "whitelist_lifecycle_report.py",
+        "seo_action_queue.py",
     ):
         need(tool in architecture, f"SEO architecture does not document {tool}", failures)
 
@@ -187,6 +203,7 @@ def main() -> int:
     print("  crawl depth and same-service cross-city similarity are measured")
     print("  metadata templating and cross-service intent overlap are measured")
     print("  protected URLs are periodically reviewable without automatic removal")
+    print("  all signals can be combined into one non-mutating SEO action queue")
     return 0
 
 
