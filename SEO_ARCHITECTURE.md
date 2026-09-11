@@ -38,8 +38,6 @@ index,follow
 → проходит quality/uniqueness checks
 ```
 
-Поэтому 30–40 тысяч файлов на диске не должны означать 30–40 тысяч URL в индексе.
-
 ## 3. Policy v1 и v2
 
 Общая реализация находится в `index_policy.py`.
@@ -68,23 +66,11 @@ Policy v2 — точные пары:
 }
 ```
 
-В v2 `tver/seo-audit-saita` остаётся закрытой, даже если и город Tver, и услуга SEO-аудита встречаются в других открытых URL.
-
-`server-opt/index_policy.example.json` использует v2. Исторический baseline остаётся v1 только для совместимости и аварийного восстановления.
+В v2 `tver/seo-audit-saita` остаётся закрытой, даже если город Tver и услуга SEO-аудита встречаются в других открытых URL.
 
 ## 4. Один источник истины
 
-Одинаковая policy-семантика используется в:
-
-- `content_generator.py`;
-- `server-opt/shrink_index.py`;
-- `seo_healthcheck.py`;
-- `server-opt/rerender_open_hubs.py`;
-- `server-opt/rerender_hubs_home.py`;
-- `seo_rebuild_broken.py`;
-- `server-opt/predeploy_check.py`.
-
-Sitemap, robots и перелинковка не должны принимать разные решения для одного URL.
+Одинаковая policy-семантика используется в генераторе, `shrink_index.py`, `seo_healthcheck.py`, hub-rerender, rebuild и strict predeploy. Sitemap, robots и перелинковка не должны принимать разные решения для одного URL.
 
 ## 5. Release contract
 
@@ -100,8 +86,6 @@ Policy, whitelist и fingerprint переключаются вместе с HTML
 
 ## 6. На основании чего открывать `город/услуга`
 
-Нужны три группы сигналов.
-
 **Search evidence:** Яндекс, GSC impressions/clicks, ручная бизнес-защита, при наличии — лиды/конверсии/внешние ссылки.
 
 **Page quality:** Title/H1/Description, достаточный контент, self-canonical, валидный JSON-LD, отсутствие exact duplicate, ручной review near-duplicate.
@@ -110,19 +94,15 @@ Policy, whitelist и fingerprint переключаются вместе с HTML
 
 ## 7. Полный аудит корпуса
 
-`server-opt/programmatic_seo_audit.py` проходит по всему release:
-
 ```bash
 python server-opt/programmatic_seo_audit.py \
   --root /var/www/x-gu.ru/current \
   --json-out /tmp/xgu-programmatic-seo.json
 ```
 
-Он показывает physical/indexable/closed pages, thin pages, orphan pages, `open → closed` links, exact duplicates и near-duplicates по SimHash.
+`server-opt/programmatic_seo_audit.py` показывает physical/indexable/closed pages, thin pages, orphan pages, `open → closed` links, exact duplicates и near-duplicates.
 
-## 8. Глубина обхода и шаблонность одной услуги по городам
-
-`server-opt/link_graph_cluster_audit.py` отвечает на два вопроса, которых недостаточно для обычного orphan-check:
+## 8. Глубина обхода и шаблонность одной услуги
 
 ```bash
 python server-opt/link_graph_cluster_audit.py \
@@ -130,16 +110,16 @@ python server-opt/link_graph_cluster_audit.py \
   --json-out /tmp/xgu-link-cluster.json
 ```
 
-Он показывает:
+`server-opt/link_graph_cluster_audit.py` показывает:
 
-- сколько индексируемых URL реально достижимы от главной;
-- сколько URL находятся в замкнутом внутреннем кластере и не достижимы из `/`;
+- сколько индексируемых URL достижимы от главной;
+- URL в замкнутых кластерах, недостижимых из `/`;
 - максимальную crawl depth;
-- распределение страниц по глубине 0/1/2/3/...;
+- распределение страниц по глубине;
 - страницы глубже заданного порога;
-- exact/near-duplicate кластеры **одной и той же услуги по разным городам**.
+- exact/near-duplicate кластеры одной услуги по разным городам.
 
-Последняя метрика особенно важна: 50 URL могут иметь разные города и формально разные Title, но оставаться практически одним шаблонным документом.
+Это важно, потому что 50 URL могут иметь разные города и формально разные мета-теги, но оставаться практически одним шаблонным документом.
 
 ## 9. Сначала поисковые данные, потом shrink
 
@@ -163,8 +143,6 @@ python server-opt/pair_quality_audit.py \
   --out /opt/p3-app/data/pair_quality.json
 ```
 
-Проверяются даже текущие `noindex` URL, если у них уже есть поисковый сигнал.
-
 Жёсткие дефекты переводят страницу в `improve_before_index`. Near-duplicate получает `review_similarity`, а не автоматический запрет.
 
 ## 11. Review-only policy v2
@@ -176,18 +154,9 @@ python server-opt/build_pair_policy.py
 python server-opt/build_pair_policy.py --apply
 ```
 
-Результат:
-
-```text
-index_policy.v2.candidate.json
-index_policy.v2.review.json
-```
-
 Candidate всегда содержит `"example_only": true`, поэтому не может быть случайно применён как production policy.
 
 ## 12. Каннибализация
-
-`server-opt/gsc_cannibalization_report.py` запрашивает GSC в разрезе `query + page`:
 
 ```bash
 python server-opt/gsc_cannibalization_report.py \
@@ -195,26 +164,40 @@ python server-opt/gsc_cannibalization_report.py \
   --out /opt/p3-app/data/gsc_cannibalization.json
 ```
 
-Он показывает запросы с несколькими URL, affected pages, competing page pairs и отдельные **same-city competing pairs**.
-
-Это диагностический сигнал: Search Console Search Analytics может возвращать не весь хвост строк.
+`server-opt/gsc_cannibalization_report.py` запрашивает GSC в разрезе `query + page` и показывает affected pages, competing page pairs и отдельные **same-city competing pairs**.
 
 ## 13. Review-план консолидации
-
-`server-opt/build_cannibalization_review.py` объединяет GSC cannibalization и `pair_quality.json`:
 
 ```bash
 python server-opt/build_cannibalization_review.py
 python server-opt/build_cannibalization_review.py --apply
 ```
 
-Результат — только `/opt/p3-app/data/cannibalization.review.json`.
-
-Для каждой same-city пары он показывает реальные клики/показы/среднюю позицию по общим запросам, quality status, рекомендуемый основной URL и альтернативы для ручного сравнения интента.
+`server-opt/build_cannibalization_review.py` объединяет каннибализацию с `pair_quality.json` и предлагает основной URL на основе реальных кликов/показов/позиции и качества страницы.
 
 **Redirect/canonical/noindex автоматически не меняются.** Общие запросы ещё не доказывают одинаковый интент.
 
-## 14. Целевой SEO-конвейер
+## 14. Жизненный цикл whitelist
+
+Whitelist — это защита от случайного закрытия, а не пожизненная индексационная привилегия.
+
+```bash
+python server-opt/whitelist_lifecycle_report.py \
+  --whitelist /var/www/x-gu.ru/current/.xgu-whitelist.txt \
+  --evidence /opt/p3-app/data/search_evidence.json \
+  --json-out /tmp/xgu-whitelist-lifecycle.json
+```
+
+`server-opt/whitelist_lifecycle_report.py` разделяет защищённые URL на:
+
+- имеющие актуальный Yandex/GSC/manual signal;
+- stale review candidates — защита есть, текущего сигнала нет;
+- URL, отсутствующие в текущем evidence dataset;
+- URL с новым поисковым сигналом, которые ещё не входят в whitelist.
+
+**Автоматического удаления нет.** Перед снятием защиты нужно проверить backlinks, конверсии, бизнес-критичность и исторические данные.
+
+## 15. Целевой SEO-конвейер
 
 ```text
 десятки тысяч физических страниц
@@ -226,6 +209,8 @@ link_graph_cluster_audit.py
 Yandex + GSC + manual evidence
         ↓
 build_search_evidence.py
+        ↓
+whitelist_lifecycle_report.py
         ↓
 pair_quality_audit.py
         ↓
@@ -250,7 +235,7 @@ strict predeploy
 production
 ```
 
-## 15. KPI
+## 16. KPI
 
 Смотрим не на количество созданных страниц, а на:
 
@@ -262,9 +247,10 @@ production
 - `open → closed` links;
 - queries with multiple competing pages;
 - same-city competing pairs;
+- stale whitelist review candidates;
 - leads/conversions по landing pages;
 - low-value/duplicate/crawled-not-indexed exclusions.
 
-## 16. Практический принцип x-gu.ru
+## 17. Практический принцип x-gu.ru
 
 **Генерировать можно десятки тысяч страниц. Индексировать нужно только конкретные URL с отдельным поисковым интентом, достаточным качеством, нормальной внутренней доступностью и доказательствами ценности. Если несколько URL делят один интент — сначала измерить каннибализацию, затем вручную решить, разводить интенты или консолидировать страницы.**
