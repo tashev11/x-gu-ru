@@ -28,6 +28,9 @@ def validate_sources(source_root: Path) -> list[str]:
     errors: list[str] = []
     for name in REQUIRED_FILES:
         path = source_root / name
+        if path.is_symlink():
+            errors.append(f"source file must not be a symlink: {path}")
+            continue
         if not path.is_file():
             errors.append(f"missing source file: {path}")
             continue
@@ -46,13 +49,23 @@ def install_set(source_root: Path, dest: Path, backup_suffix: str) -> list[Path]
     errors = validate_sources(source_root)
     if errors:
         raise ValueError("; ".join(errors))
+    if dest.is_symlink():
+        raise ValueError(f"destination app.services directory must not be a symlink: {dest}")
+    if not dest.is_dir():
+        raise ValueError(f"destination app.services directory not found: {dest}")
 
-    dest.mkdir(parents=True, exist_ok=True)
     backups: dict[Path, Path | None] = {}
     staged: dict[Path, Path] = {}
     replaced: list[Path] = []
 
     try:
+        # Validate every live target before staging anything. A target symlink
+        # would make copy2() follow an unexpected path during backup.
+        for name in REQUIRED_FILES:
+            target = dest / name
+            if target.is_symlink():
+                raise ValueError(f"refusing symlink generator target: {target}")
+
         # Stage every new file before mutating any live target.
         for name in REQUIRED_FILES:
             source = source_root / name
@@ -61,11 +74,14 @@ def install_set(source_root: Path, dest: Path, backup_suffix: str) -> list[Path]
             shutil.copy2(source, temp)
             staged[target] = temp
 
-        # Snapshot every existing live target before the first replace.
+        # Snapshot every existing live target before the first replace. Never
+        # overwrite an older backup with an accidentally reused suffix.
         for target in staged:
             backup: Path | None = None
             if target.exists():
                 backup = target.with_name(target.name + backup_suffix)
+                if backup.exists() or backup.is_symlink():
+                    raise FileExistsError(f"refusing to overwrite existing backup: {backup}")
                 shutil.copy2(target, backup)
             backups[target] = backup
 
@@ -112,7 +128,11 @@ def main() -> int:
     args = parser.parse_args()
 
     source_root = args.source_root.resolve()
-    dest = args.dest.resolve()
+    raw_dest = args.dest.absolute()
+    if raw_dest.is_symlink():
+        print(f"Destination app.services directory must not be a symlink: {raw_dest}", file=sys.stderr)
+        return 3
+    dest = raw_dest.resolve()
     errors = validate_sources(source_root)
     if errors:
         for error in errors:
@@ -121,6 +141,9 @@ def main() -> int:
     if not dest.is_dir():
         print(f"Destination app.services directory not found: {dest}", file=sys.stderr)
         return 3
+    if any((dest / name).is_symlink() for name in REQUIRED_FILES):
+        print("Generator destination contains a symlink target; refusing installation.", file=sys.stderr)
+        return 3
 
     print(f"source: {source_root}")
     print(f"dest:   {dest}")
@@ -128,10 +151,10 @@ def main() -> int:
         print(f"  {source_root / name} -> {dest / name}")
 
     if not args.apply:
-        print("[DRY-RUN] Sources are syntactically valid; nothing installed. Re-run with --apply after review.")
+        print("[DRY-RUN] Sources/targets are valid; nothing installed. Re-run with --apply after review.")
         return 0
 
-    suffix = ".bak." + time.strftime("%Y%m%d-%H%M%S")
+    suffix = ".bak." + time.strftime("%Y%m%d-%H%M%S") + f".{os.getpid()}"
     try:
         backups = install_set(source_root, dest, suffix)
     except Exception as exc:  # noqa: BLE001
