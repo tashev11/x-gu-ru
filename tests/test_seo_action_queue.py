@@ -115,6 +115,50 @@ class SeoActionQueueTests(unittest.TestCase):
         self.assertEqual(item["primary_action"], "INTENT_REVIEW")
         self.assertIn("INTENT_REVIEW", item["secondary_actions"])
 
+    def test_gsc_snippet_opportunity_can_promote_keep_page(self) -> None:
+        url = "https://x-gu.ru/moskva/a/"
+        coverage = {"cohorts": {"open_with_signal": [row(url, "open_with_signal")]}}
+        opportunities = {
+            "opportunities": [
+                {
+                    "url": url,
+                    "category": "SNIPPET_REVIEW",
+                    "position": 6.2,
+                    "impressions": 500,
+                    "ctr": 0.008,
+                }
+            ]
+        }
+        queue = mod.build_queue(coverage, opportunities=opportunities)
+        item = queue["items"][0]
+        self.assertEqual(item["primary_action"], "SNIPPET_REVIEW")
+        self.assertIn("SNIPPET_REVIEW", item["secondary_actions"])
+        self.assertIn("gsc_opportunity", item["annotations"])
+
+    def test_closed_gsc_signal_without_evidence_becomes_consistency_review(self) -> None:
+        url = "https://x-gu.ru/moskva/a/"
+        coverage = {
+            "cohorts": {
+                "closed_without_signal": [row(url, "closed_without_signal", signal=False)]
+            }
+        }
+        opportunities = {
+            "opportunities": [
+                {
+                    "url": url,
+                    "category": "CLOSED_SIGNAL_REVIEW",
+                    "position": 16,
+                    "impressions": 80,
+                    "ctr": 0.01,
+                }
+            ]
+        }
+        queue = mod.build_queue(coverage, opportunities=opportunities)
+        item = queue["items"][0]
+        self.assertEqual(item["primary_action"], "EVIDENCE_MISMATCH_REVIEW")
+        self.assertIn("OPEN_REVIEW", item["secondary_actions"])
+        self.assertTrue(item["annotations"]["coverage_opportunity_consistency_review"])
+
     def test_items_are_sorted_by_action_priority_then_search_signal(self) -> None:
         coverage = {
             "cohorts": {
