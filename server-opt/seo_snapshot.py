@@ -33,6 +33,7 @@ REPORT_WRITE_ONLY_SCRIPTS = {
     "whitelist_lifecycle_report.py",
     "build_pair_policy.py",
     "gsc_cannibalization_report.py",
+    "gsc_opportunity_report.py",
     "build_cannibalization_review.py",
     "seo_action_queue.py",
 }
@@ -83,6 +84,7 @@ def build_steps(
     graph = out_dir / "link_graph_cluster.json"
     metadata = out_dir / "metadata_intent.json"
     cannibalization = out_dir / "gsc_cannibalization.json"
+    opportunities = out_dir / "gsc_opportunities.json"
     cann_review = out_dir / "cannibalization.review.json"
 
     def tool(name: str) -> str:
@@ -209,6 +211,19 @@ def build_steps(
             ],
         ),
         (
+            "GSC opportunities",
+            [
+                python,
+                tool("gsc_opportunity_report.py"),
+                "--root",
+                str(root),
+                "--days",
+                str(days),
+                "--out",
+                str(opportunities),
+            ],
+        ),
+        (
             "cannibalization review",
             [
                 python,
@@ -235,6 +250,8 @@ def build_steps(
                 str(graph),
                 "--metadata",
                 str(metadata),
+                "--opportunities",
+                str(opportunities),
                 "--out",
                 str(out_dir / "seo_action_queue.json"),
                 "--apply",
