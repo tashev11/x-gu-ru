@@ -1,6 +1,6 @@
 # X-GU.RU — как работают тысячи SEO-страниц
 
-Этот документ описывает programmatic SEO-модель x-gu.ru: какие URL физически существуют, какие должны индексироваться и как мы принимаем решение `index/noindex` для десятков тысяч сгенерированных страниц.
+Этот документ описывает programmatic SEO-модель x-gu.ru: какие URL физически существуют, какие должны индексироваться и как принимается решение `index/noindex` для десятков тысяч сгенерированных страниц.
 
 ## 1. Исторический масштаб
 
@@ -88,11 +88,7 @@ python server-opt/metadata_intent_audit.py \
   --json-out /tmp/xgu-metadata-intent.json
 ```
 
-`server-opt/metadata_intent_audit.py` измеряет:
-
-- похожесть Title/H1/Description одной услуги по разным городам;
-- услуги, где большая доля city pages выглядит как один мета-шаблон;
-- разные услуги одного города с подозрительно похожим поисковым обещанием.
+`server-opt/metadata_intent_audit.py` измеряет похожесть Title/H1/Description одной услуги по городам, service-wide template risk и cross-service intent overlap внутри одного города.
 
 Высокая похожесть — сигнал для ревью. Не надо рандомить Title только ради формальной «уникальности».
 
@@ -124,8 +120,6 @@ Quality report хранит `generated_at` и `source_evidence_generated_at`.
 
 ## 12. Точное покрытие текущей policy
 
-Чтобы понимать не абстрактное число открытых страниц, а **зачем каждая из них открыта**, используется:
-
 ```bash
 python server-opt/index_coverage_review.py \
   --root /var/www/x-gu.ru/current \
@@ -136,14 +130,15 @@ python server-opt/index_coverage_review.py \
 
 `server-opt/index_coverage_review.py` раскладывает физические пары на cohorts:
 
-- `open_with_signal` — policy открывает URL и текущий search signal это поддерживает;
-- `open_without_signal` — страница открыта, но текущего Yandex/GSC/manual evidence нет;
-- `open_with_signal_quality_fail` — спрос есть, но уже открытая страница имеет жёсткий quality defect;
-- `closed_with_signal_quality_ready` — сильный кандидат на расширение policy v2;
-- `closed_with_signal_quality_fail` — спрос есть, но страницу сначала надо исправить;
-- `closed_without_signal` — обычное закрытое множество.
+- `open_with_signal`;
+- `open_without_signal`;
+- `open_with_signal_quality_fail`;
+- `closed_with_signal_quality_ready`;
+- `closed_with_signal_quality_fail`;
+- `closed_with_signal_quality_unknown`;
+- `closed_without_signal`.
 
-Отчёт отдельно показывает `open_pair_signal_coverage_ratio`, а также разбивку по услугам и городам. Он **никогда сам не меняет policy**.
+Ключевой KPI — `open_pair_signal_coverage_ratio`. Отчёт никогда сам не меняет policy.
 
 ## 13. Review-only policy v2 и свежесть данных
 
@@ -176,16 +171,45 @@ python server-opt/build_cannibalization_review.py --apply
 
 Whitelist — защита от случайного закрытия, а не пожизненная индексационная привилегия.
 
-```bash
-python server-opt/whitelist_lifecycle_report.py \
-  --whitelist /var/www/x-gu.ru/current/.xgu-whitelist.txt \
-  --evidence /opt/p3-app/data/search_evidence.json \
-  --json-out /tmp/xgu-whitelist-lifecycle.json
+`server-opt/whitelist_lifecycle_report.py` показывает URL с актуальным сигналом, stale review candidates, отсутствующие в evidence и новые URL с сигналом вне whitelist. Автоматического удаления нет.
+
+## 17. Единая очередь действий
+
+`server-opt/seo_action_queue.py` собирает coverage, quality, crawl graph, metadata overlap и cannibalization review в одну очередь по URL.
+
+Основные review-actions:
+
+```text
+CANNIBALIZATION_REVIEW
+IMPROVE_OPEN_PAGE
+IMPROVE_BEFORE_OPEN
+OPEN_REVIEW
+INTENT_REVIEW
+INTERNAL_LINKING
+CLOSE_REVIEW
+QUALITY_AUDIT
+KEEP
 ```
 
-Отчёт показывает URL с актуальным сигналом, stale review candidates, отсутствующие в evidence и новые URL с сигналом вне whitelist. Автоматического удаления нет.
+Очередь приоритизирует работу, но содержит `automatic_changes=false`: никакой redirect/index/noindex не применяется только на основании рейтинга.
 
-## 17. Целевой SEO-конвейер
+## 18. Один полный read-only SEO snapshot
+
+Для production-диагностики используется:
+
+```bash
+python server-opt/seo_snapshot.py \
+  --root /var/www/x-gu.ru/current \
+  --days 90
+```
+
+`server-opt/seo_snapshot.py` создаёт отдельный timestamped каталог в `/opt/p3-app/data/seo-snapshots/` и запускает только allowlist report/review-инструментов. Он не вызывает shrink, purge, rerender, bootstrap или deploy.
+
+В snapshot входят search evidence, pair quality, corpus audit, crawl graph, metadata audit, index coverage, whitelist lifecycle, review-only policy v2 candidate, cannibalization report/review и финальный `seo_action_queue.json`.
+
+Подробный операционный порядок — в `SEO_OPERATIONS.md`.
+
+## 19. Целевой SEO-конвейер
 
 ```text
 physical pages
@@ -208,22 +232,22 @@ index_coverage_review.py
   ↓
 build_pair_policy.py
   ↓
-review-only exact pair candidate
-  ↓
 gsc_cannibalization_report.py
   ↓
 build_cannibalization_review.py
   ↓
-human intent review
+seo_action_queue.py
+  ↓
+human review
   ↓
 reviewed production policy v2
   ↓
-shrink + city-specific linking + strict predeploy
+release candidate + strict predeploy
   ↓
 production
 ```
 
-## 18. KPI
+## 20. KPI
 
 Смотрим не на количество созданных страниц, а на:
 
@@ -240,6 +264,6 @@ production
 - stale whitelist review candidates;
 - leads/conversions и search-engine exclusions.
 
-## 19. Практический принцип x-gu.ru
+## 21. Практический принцип x-gu.ru
 
 **Генерировать можно десятки тысяч страниц. Индексировать нужно конкретные URL с отдельным интентом, качеством, нормальной внутренней доступностью и доказательствами ценности. Текущая policy должна регулярно доказывать свою полезность данными, а не жить бессрочно только потому, что URL когда-то был открыт.**
