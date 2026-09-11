@@ -37,6 +37,7 @@ def main() -> int:
     policy = read("server-opt/build_pair_policy.py", failures)
     coverage = read("server-opt/index_coverage_review.py", failures)
     cannibalization = read("server-opt/gsc_cannibalization_report.py", failures)
+    opportunity = read("server-opt/gsc_opportunity_report.py", failures)
     consolidation = read("server-opt/build_cannibalization_review.py", failures)
     graph = read("server-opt/link_graph_cluster_audit.py", failures)
     metadata = read("server-opt/metadata_intent_audit.py", failures)
@@ -44,6 +45,7 @@ def main() -> int:
     action_queue = read("server-opt/seo_action_queue.py", failures)
     snapshot = read("server-opt/seo_snapshot.py", failures)
     architecture = read("SEO_ARCHITECTURE.md", failures)
+    operations = read("SEO_OPERATIONS.md", failures)
 
     for rel in (
         "tests/test_build_search_evidence.py",
@@ -51,6 +53,7 @@ def main() -> int:
         "tests/test_build_pair_policy.py",
         "tests/test_index_coverage_review.py",
         "tests/test_gsc_cannibalization_report.py",
+        "tests/test_gsc_opportunity_report.py",
         "tests/test_build_cannibalization_review.py",
         "tests/test_link_graph_cluster_audit.py",
         "tests/test_metadata_intent_audit.py",
@@ -120,6 +123,18 @@ def main() -> int:
         failures,
     )
     tokens(
+        opportunity,
+        {
+            "CLOSED_SIGNAL_REVIEW": "GSC opportunity report lost closed-URL signal review",
+            "SNIPPET_REVIEW": "GSC opportunity report lost top-10 low-CTR review",
+            "STRIKING_DISTANCE": "GSC opportunity report lost 8-20 position opportunity",
+            "CONTENT_GROWTH": "GSC opportunity report lost mid-ranking growth opportunity",
+            "policy_resolver": "GSC opportunity report no longer compares opportunities with exact policy",
+            '"automatic_changes": False': "GSC opportunity report can mutate SEO state automatically",
+        },
+        failures,
+    )
+    tokens(
         consolidation,
         {
             "_query_metric_index": "consolidation planner no longer reconstructs real query/page metrics",
@@ -170,6 +185,9 @@ def main() -> int:
             "IMPROVE_OPEN_PAGE": "SEO action queue lost live quality-fix priority",
             "OPEN_REVIEW": "SEO action queue lost expansion review action",
             "CLOSE_REVIEW": "SEO action queue lost contraction review action",
+            "EVIDENCE_MISMATCH_REVIEW": "SEO action queue lost cross-report consistency review",
+            "SNIPPET_REVIEW": "SEO action queue lost GSC snippet opportunity",
+            "STRIKING_DISTANCE": "SEO action queue lost striking-distance opportunity",
             "INTERNAL_LINKING": "SEO action queue lost internal-linking action",
             '"automatic_changes": False': "SEO action queue can mutate SEO state automatically",
             "Never apply redirects/noindex/index solely from this queue": "SEO action queue lost human-review warning",
@@ -180,6 +198,8 @@ def main() -> int:
         snapshot,
         {
             "REPORT_WRITE_ONLY_SCRIPTS": "SEO snapshot no longer uses a report-only allowlist",
+            '"gsc_opportunity_report.py"': "SEO snapshot no longer includes GSC opportunity analysis",
+            '"--opportunities"': "SEO snapshot no longer feeds opportunities into the final action queue",
             '"report_writes_only": True': "SEO snapshot manifest no longer declares report-only behavior",
             "production SEO state was not changed": "SEO snapshot lost non-mutation operator confirmation",
             "seo_action_queue.json": "SEO snapshot no longer produces final action queue",
@@ -203,6 +223,7 @@ def main() -> int:
     for tool in (
         "index_coverage_review.py",
         "gsc_cannibalization_report.py",
+        "gsc_opportunity_report.py",
         "build_cannibalization_review.py",
         "link_graph_cluster_audit.py",
         "metadata_intent_audit.py",
@@ -210,7 +231,10 @@ def main() -> int:
         "seo_action_queue.py",
         "seo_snapshot.py",
     ):
-        need(tool in architecture, f"SEO architecture does not document {tool}", failures)
+        need(tool in architecture or tool in operations, f"SEO docs do not document {tool}", failures)
+
+    need("EVIDENCE_MISMATCH_REVIEW" in operations, "SEO operations does not explain evidence mismatch review", failures)
+    need("GSC opportunities" in operations or "gsc_opportunity_report.py" in operations, "SEO operations does not explain GSC growth opportunities", failures)
 
     if failures:
         print("SEO pipeline healthcheck: FAIL")
@@ -222,6 +246,8 @@ def main() -> int:
     print("  search evidence is collected before index decisions")
     print("  evidence/quality freshness and provenance are enforced")
     print("  exact policy coverage is compared with current demand + quality")
+    print("  GSC opportunities prioritize snippet/striking-distance/content growth")
+    print("  cross-report evidence mismatches are surfaced instead of silently ignored")
     print("  page quality blocks weak pair recommendations")
     print("  pair policy remains review-only before promotion")
     print("  GSC query/page cannibalization is measured with pagination")
