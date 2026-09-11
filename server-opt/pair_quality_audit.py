@@ -12,6 +12,7 @@ import json
 import re
 import sys
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -46,14 +47,14 @@ def _file_for(root: Path, url: str, base_url: str) -> Path | None:
     return root / pair[0] / pair[1] / "index.html"
 
 
-def _read_evidence(path: Path) -> list[dict]:
+def _read_evidence(path: Path) -> tuple[list[dict], dict]:
     if not path.is_file():
         raise FileNotFoundError(f"search evidence not found: {path}")
     payload = json.loads(path.read_text(encoding="utf-8", errors="strict"))
     rows = payload.get("urls") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         raise ValueError("search evidence must contain an 'urls' array")
-    return [row for row in rows if isinstance(row, dict)]
+    return [row for row in rows if isinstance(row, dict)], payload
 
 
 def audit_pairs(
@@ -221,13 +222,16 @@ def main() -> int:
         print(f"release root not found: {args.root}", file=sys.stderr)
         return 2
     try:
-        rows = _read_evidence(args.evidence)
+        rows, evidence_payload = _read_evidence(args.evidence)
         audit = audit_pairs(
             args.root,
             rows,
             min_words=args.min_words,
             simhash_distance=args.simhash_distance,
         )
+        audit["generated_at"] = date.today().isoformat()
+        audit["source_evidence_generated_at"] = evidence_payload.get("generated_at")
+        audit["source_evidence_path"] = str(args.evidence.resolve())
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         print(f"pair quality audit failed: {exc}", file=sys.stderr)
         return 2
@@ -239,6 +243,7 @@ def main() -> int:
     print(f"  similarity review:             {audit['pairs_needing_similarity_review']}")
     print(f"  exact duplicate groups:        {len(audit['exact_duplicate_groups'])}")
     print(f"  near duplicate groups:         {len(audit['near_duplicate_groups'])}")
+    print(f"  source evidence date:          {audit['source_evidence_generated_at']}")
 
     if not args.out.parent.is_dir():
         print(f"output parent not found: {args.out.parent}", file=sys.stderr)
