@@ -38,6 +38,7 @@ def main() -> int:
     cannibalization = read("server-opt/gsc_cannibalization_report.py", failures)
     consolidation = read("server-opt/build_cannibalization_review.py", failures)
     graph = read("server-opt/link_graph_cluster_audit.py", failures)
+    metadata = read("server-opt/metadata_intent_audit.py", failures)
     whitelist_lifecycle = read("server-opt/whitelist_lifecycle_report.py", failures)
     architecture = read("SEO_ARCHITECTURE.md", failures)
 
@@ -48,6 +49,7 @@ def main() -> int:
         "tests/test_gsc_cannibalization_report.py",
         "tests/test_build_cannibalization_review.py",
         "tests/test_link_graph_cluster_audit.py",
+        "tests/test_metadata_intent_audit.py",
         "tests/test_whitelist_lifecycle_report.py",
     ):
         read(rel, failures)
@@ -124,6 +126,17 @@ def main() -> int:
         failures,
     )
     tokens(
+        metadata,
+        {
+            "same_service_high_similarity_pairs": "metadata audit no longer measures same-service city templating",
+            "same_city_cross_service_high_similarity_pairs": "metadata audit no longer measures cross-service intent overlap",
+            "services_with_template_risk": "metadata audit no longer identifies service-wide template risk",
+            "metadata_similarity": "metadata audit lost field-level title/H1/description similarity",
+            "template_risk": "metadata audit lost service-level risk classification",
+        },
+        failures,
+    )
+    tokens(
         whitelist_lifecycle,
         {
             "stale_review_urls": "whitelist lifecycle no longer identifies stale protected URLs",
@@ -137,6 +150,7 @@ def main() -> int:
     need("gsc_cannibalization_report.py" in architecture, "SEO architecture does not document cannibalization audit", failures)
     need("build_cannibalization_review.py" in architecture, "SEO architecture does not document consolidation review", failures)
     need("link_graph_cluster_audit.py" in architecture, "SEO architecture does not document crawl-depth/service-cluster audit", failures)
+    need("metadata_intent_audit.py" in architecture, "SEO architecture does not document metadata/intent audit", failures)
     need("whitelist_lifecycle_report.py" in architecture, "SEO architecture does not document whitelist lifecycle review", failures)
 
     if failures:
@@ -153,6 +167,7 @@ def main() -> int:
     print("  GSC query/page cannibalization is measured with pagination")
     print("  consolidation recommendations never auto-redirect or auto-canonicalize")
     print("  crawl depth and same-service cross-city similarity are measured")
+    print("  metadata templating and cross-service intent overlap are measured")
     print("  protected URLs are periodically reviewable without automatic removal")
     return 0
 
