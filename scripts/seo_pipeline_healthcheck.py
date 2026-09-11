@@ -71,6 +71,8 @@ def main() -> int:
             "exact_duplicate": "pair quality audit lost exact-duplicate check",
             "near_duplicate": "pair quality audit lost near-duplicate review signal",
             "improve_before_index": "pair quality audit lost hard quality status",
+            "source_evidence_generated_at": "pair quality report lost search-evidence provenance",
+            '"generated_at"': "pair quality report no longer records its generation date",
         },
         failures,
     )
@@ -82,6 +84,9 @@ def main() -> int:
             "require_quality": "pair policy builder no longer requires quality evidence",
             "quality_hard_fail": "hard quality defects no longer block pair recommendation",
             "review_similarity": "similarity review state is no longer preserved",
+            "validate_input_freshness": "pair policy builder no longer checks evidence freshness",
+            "--max-input-age-days": "pair policy builder has no explicit evidence-age limit",
+            "different search evidence snapshot": "quality/evidence snapshot mismatch is no longer rejected",
         },
         failures,
     )
@@ -99,6 +104,7 @@ def main() -> int:
         consolidation,
         {
             "_query_metric_index": "consolidation planner no longer reconstructs real query/page metrics",
+            "quality_state": "consolidation planner is not aligned with pair-quality schema",
             "hard_quality_fail": "consolidation planner ignores hard page-quality defects",
             "recommended_primary": "consolidation planner no longer proposes a primary URL",
             '"automatic_changes": False': "consolidation planner can apply automatic SEO changes",
@@ -141,6 +147,7 @@ def main() -> int:
 
     print("SEO pipeline healthcheck: OK")
     print("  search evidence is collected before index decisions")
+    print("  evidence/quality freshness and provenance are enforced")
     print("  page quality blocks weak pair recommendations")
     print("  pair policy remains review-only before promotion")
     print("  GSC query/page cannibalization is measured with pagination")
