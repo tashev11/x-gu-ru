@@ -167,6 +167,15 @@ def check_generator(failures: list[str]) -> None:
             '_legacy._review_variant = _disabled_review_variant': "legacy deterministic review object is not disabled",
             '_legacy._city_prepositional = city_prepositional': "legacy generator does not use shared morphology",
             "_sanitize_generated_html": "generated HTML sanitizer missing",
+            'key in {"aggregateRating", "review"}': "JSON-LD sanitizer no longer removes ratings/reviews",
+            'payload.get("@type") == "LocalBusiness"': "JSON-LD sanitizer no longer removes synthetic LocalBusiness blocks",
+            "_remove_reviews_section": "visible reviews section is no longer removed",
+            "_remove_synthetic_counter_panel": "synthetic KPI counter panel is no longer removed",
+            '"50+ проектов": "Работа по этапам"': "unsupported 50+ projects claim is no longer neutralized",
+            '"TOP-10 гарантии": "Прозрачные отчёты"': "unsupported TOP-10 guarantee is no longer neutralized",
+            '"24/7 поддержка": "Связь 9:00–21:00"': "unsupported 24/7 support claim is no longer neutralized",
+            '"Экономия до 150 000 рублей!": "Оценим задачу и бюджет до старта."': "unsupported savings claim is no longer neutralized",
+            '"Экономия до 150 000₽": "Понятный бюджет до старта"': "unsupported compact savings claim is no longer neutralized",
         },
         failures,
     )
@@ -396,6 +405,7 @@ def check_validation_and_docs(failures: list[str]) -> None:
     env = read(".env.example", failures)
     readme = read("README.md", failures)
     seo_arch = read("SEO_ARCHITECTURE.md", failures)
+    seo_ops = read("SEO_OPERATIONS.md", failures)
     runbook = read("server-opt/PRODUCTION_DEPLOY_RUNBOOK.md", failures)
 
     for rel in TEST_FILES:
@@ -409,6 +419,7 @@ def check_validation_and_docs(failures: list[str]) -> None:
             '"E9,F63,F7,F82"': "validator lost fatal Ruff rules",
             '"-m", "unittest"': "validator lost unit tests",
             "scripts/repo_healthcheck.py": "validator lost repository healthcheck",
+            "scripts/seo_pipeline_healthcheck.py": "validator lost SEO pipeline healthcheck",
         },
         failures,
     )
@@ -417,9 +428,12 @@ def check_validation_and_docs(failures: list[str]) -> None:
     need("index_policy.py" in readme, "README does not document shared SEO policy model", failures)
     need("pair_quality_audit.py" in readme, "README does not document pair quality audit", failures)
     need("build_pair_policy.py" in readme, "README does not document pair-policy workflow", failures)
+    need("SEO_ARCHITECTURE.md" in readme, "README does not link SEO architecture", failures)
+    need("SEO_OPERATIONS.md" in readme, "README does not link SEO operations", failures)
     need("open_pairs" in seo_arch, "SEO architecture does not document exact pair model", failures)
     need("programmatic_seo_audit.py" in seo_arch, "SEO architecture does not document full-corpus audit", failures)
     need("build_search_evidence.py" in seo_arch, "SEO architecture does not document combined search evidence", failures)
+    need("seo_snapshot.py" in seo_ops, "SEO operations does not document full snapshot command", failures)
     need("python scripts/validate_repo.py" in runbook, "production runbook skips repository validation", failures)
 
 
@@ -461,11 +475,12 @@ def main() -> int:
     print("Repository healthcheck: OK")
     print("  SEO policy v1 matrix + v2 exact city/service pairs share one model")
     print("  generator, sitemap, healthcheck and hub links use the same pair decision")
+    print("  hardened generator strips fabricated proof/rating blocks before publication")
     print("  Yandex/GSC evidence is intersected with targeted pair quality before v2 recommendation")
     print("  full-corpus audit tracks thin/orphan/open-to-closed/duplicate risks")
     print("  pair-policy output is review-only and cannot auto-promote to production")
     print("  release writes/deploys remain candidate-only, fingerprinted and serialized")
-    print("  CI/local validation share one entrypoint")
+    print("  CI/local validation share core + SEO pipeline healthchecks")
     return 0
 
 
