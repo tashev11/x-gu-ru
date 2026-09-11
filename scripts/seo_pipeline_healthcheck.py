@@ -42,6 +42,7 @@ def main() -> int:
     metadata = read("server-opt/metadata_intent_audit.py", failures)
     whitelist_lifecycle = read("server-opt/whitelist_lifecycle_report.py", failures)
     action_queue = read("server-opt/seo_action_queue.py", failures)
+    snapshot = read("server-opt/seo_snapshot.py", failures)
     architecture = read("SEO_ARCHITECTURE.md", failures)
 
     for rel in (
@@ -55,6 +56,7 @@ def main() -> int:
         "tests/test_metadata_intent_audit.py",
         "tests/test_whitelist_lifecycle_report.py",
         "tests/test_seo_action_queue.py",
+        "tests/test_seo_snapshot.py",
     ):
         read(rel, failures)
 
@@ -174,6 +176,29 @@ def main() -> int:
         },
         failures,
     )
+    tokens(
+        snapshot,
+        {
+            "REPORT_WRITE_ONLY_SCRIPTS": "SEO snapshot no longer uses a report-only allowlist",
+            '"report_writes_only": True': "SEO snapshot manifest no longer declares report-only behavior",
+            "production SEO state was not changed": "SEO snapshot lost non-mutation operator confirmation",
+            "seo_action_queue.json": "SEO snapshot no longer produces final action queue",
+        },
+        failures,
+    )
+    for forbidden in (
+        "shrink_index.py",
+        "purge_closed_pages.py",
+        "deploy_release.py",
+        "bootstrap_release_layout.py",
+        "rerender_open_hubs.py",
+        "rerender_hubs_home.py",
+    ):
+        need(
+            forbidden not in snapshot.split("REPORT_WRITE_ONLY_SCRIPTS =", 1)[-1].split("}", 1)[0],
+            f"SEO snapshot report allowlist contains production mutator: {forbidden}",
+            failures,
+        )
 
     for tool in (
         "index_coverage_review.py",
@@ -183,6 +208,7 @@ def main() -> int:
         "metadata_intent_audit.py",
         "whitelist_lifecycle_report.py",
         "seo_action_queue.py",
+        "seo_snapshot.py",
     ):
         need(tool in architecture, f"SEO architecture does not document {tool}", failures)
 
@@ -204,6 +230,7 @@ def main() -> int:
     print("  metadata templating and cross-service intent overlap are measured")
     print("  protected URLs are periodically reviewable without automatic removal")
     print("  all signals can be combined into one non-mutating SEO action queue")
+    print("  one-command SEO snapshot is constrained to report-only tools")
     return 0
 
 
