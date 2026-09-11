@@ -25,6 +25,7 @@ PRIORITY = {
     "CANNIBALIZATION_REVIEW": 100,
     "IMPROVE_OPEN_PAGE": 90,
     "IMPROVE_BEFORE_OPEN": 85,
+    "EVIDENCE_MISMATCH_REVIEW": 80,
     "OPEN_REVIEW": 75,
     "INTENT_REVIEW": 70,
     "INTERNAL_LINKING": 65,
@@ -210,6 +211,12 @@ def build_queue(
             elif category == "CLOSED_SIGNAL_REVIEW":
                 reasons.append("GSC independently reports search signal for a policy-closed URL")
                 annotations["coverage_opportunity_consistency_review"] = True
+                if not bool(row.get("has_current_signal")):
+                    action = "EVIDENCE_MISMATCH_REVIEW"
+                    secondary.append("OPEN_REVIEW")
+                    reasons.append(
+                        "coverage/search_evidence says no qualifying signal while query+page GSC data says the closed URL has signal"
+                    )
 
         if action == "KEEP" and "INTENT_REVIEW" in secondary:
             action = "INTENT_REVIEW"
@@ -254,7 +261,7 @@ def build_queue(
         "quality_generated_at": coverage.get("quality_generated_at"),
         "items": items,
         "warning": (
-            "CLOSE_REVIEW, OPEN_REVIEW and CANNIBALIZATION_REVIEW are human decisions. "
+            "CLOSE_REVIEW, OPEN_REVIEW, EVIDENCE_MISMATCH_REVIEW and CANNIBALIZATION_REVIEW are human decisions. "
             "Never apply redirects/noindex/index solely from this queue."
         ),
     }
