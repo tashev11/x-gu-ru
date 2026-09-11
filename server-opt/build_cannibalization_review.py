@@ -42,27 +42,50 @@ def _hard_fail(row: dict | None) -> bool:
     return bool(hard)
 
 
-def _page_metrics(pair: dict, url: str) -> dict[str, float]:
-    metrics = {"impressions": 0.0, "clicks": 0.0, "position_weight": 0.0}
-    for conflict in pair.get("query_details") or []:
-        for page in conflict.get("pages") or []:
-            if page.get("url") != url:
+def _query_metric_index(cannibalization: dict) -> dict[tuple[str, str], dict[str, float]]:
+    """Aggregate real query/page metrics for every competing page pair."""
+    index: dict[tuple[str, str], dict[str, float]] = {}
+    conflicts = cannibalization.get("query_conflicts") or []
+    if not isinstance(conflicts, list):
+        raise ValueError("query_conflicts must be an array")
+
+    for conflict in conflicts:
+        if not isinstance(conflict, dict):
+            continue
+        pages = conflict.get("pages") or []
+        if not isinstance(pages, list):
+            continue
+        urls = [str(page.get("url") or "") for page in pages if isinstance(page, dict)]
+        for left_index, left_url in enumerate(urls):
+            if not left_url:
                 continue
-            impressions = float(page.get("impressions") or 0.0)
-            metrics["impressions"] += impressions
-            metrics["clicks"] += float(page.get("clicks") or 0.0)
-            metrics["position_weight"] += float(page.get("position") or 0.0) * impressions
-    return metrics
+            for right_url in urls[left_index + 1 :]:
+                if not right_url:
+                    continue
+                pair_key = tuple(sorted((left_url, right_url)))
+                for page in pages:
+                    if not isinstance(page, dict):
+                        continue
+                    url = str(page.get("url") or "")
+                    if url not in pair_key:
+                        continue
+                    metric_key = ("|".join(pair_key), url)
+                    item = index.setdefault(
+                        metric_key,
+                        {"impressions": 0.0, "clicks": 0.0, "position_weight": 0.0},
+                    )
+                    impressions = float(page.get("impressions") or 0.0)
+                    item["impressions"] += impressions
+                    item["clicks"] += float(page.get("clicks") or 0.0)
+                    item["position_weight"] += float(page.get("position") or 0.0) * impressions
+    return index
 
 
 def _fallback_pair_metrics(pair: dict, url: str) -> dict[str, float]:
-    """Use pair-level totals when older cannibalization JSON has no query_details."""
     pages = list(pair.get("pages") or [])
     if url not in pages:
         return {"impressions": 0.0, "clicks": 0.0, "position_weight": 0.0}
     shared = float(pair.get("shared_impressions") or 0.0)
-    # We cannot reconstruct the split from older reports. Give equal evidence
-    # and let quality/manual review decide instead of inventing precision.
     share = shared / max(1, len(pages))
     return {"impressions": share, "clicks": 0.0, "position_weight": 0.0}
 
@@ -72,13 +95,14 @@ def _score(metrics: dict[str, float], quality: dict | None) -> tuple[int, float,
     impressions = metrics["impressions"]
     clicks = metrics["clicks"]
     position = metrics["position_weight"] / impressions if impressions else 999.0
-    # Lexicographic score: a clean page always beats a hard-failing page;
-    # then clicks, impressions, and better average position decide.
+    # A clean page always beats a hard-failing page. Search performance then
+    # breaks ties: clicks, impressions, and finally better average position.
     return (0 if hard_fail else 1, clicks, impressions, -position)
 
 
 def build_review(cannibalization: dict, quality_payload: dict) -> dict:
     quality = _quality_map(quality_payload)
+    metric_index = _query_metric_index(cannibalization)
     source_pairs = cannibalization.get("same_city_pairs") or []
     if not isinstance(source_pairs, list):
         raise ValueError("same_city_pairs must be an array")
@@ -90,12 +114,16 @@ def build_review(cannibalization: dict, quality_payload: dict) -> dict:
         pages = [str(url) for url in pair.get("pages") or [] if str(url).strip()]
         if len(pages) < 2:
             continue
+        pair_key = tuple(sorted(pages[:2]))
+        pair_id = "|".join(pair_key)
 
         candidates = []
-        for url in pages:
-            metrics = _page_metrics(pair, url)
-            if not metrics["impressions"] and not metrics["clicks"]:
+        for url in pair_key:
+            metrics = metric_index.get((pair_id, url))
+            metric_source = "query_conflicts"
+            if metrics is None:
                 metrics = _fallback_pair_metrics(pair, url)
+                metric_source = "pair_fallback"
             q = quality.get(url)
             impressions = metrics["impressions"]
             avg_position = metrics["position_weight"] / impressions if impressions else None
@@ -107,6 +135,7 @@ def build_review(cannibalization: dict, quality_payload: dict) -> dict:
                     "impressions": impressions,
                     "clicks": metrics["clicks"],
                     "position": avg_position,
+                    "metric_source": metric_source,
                     "score": _score(metrics, q),
                 }
             )
@@ -114,6 +143,12 @@ def build_review(cannibalization: dict, quality_payload: dict) -> dict:
         ranked = sorted(candidates, key=lambda item: item["score"], reverse=True)
         primary = ranked[0]
         alternatives = ranked[1:]
+        confidence = "review"
+        if primary["quality_status"] == "missing_quality" or primary["metric_source"] != "query_conflicts":
+            confidence = "low"
+        if primary["hard_quality_fail"]:
+            confidence = "fix-first"
+
         reviews.append(
             {
                 "city": pair.get("city", ""),
@@ -121,9 +156,7 @@ def build_review(cannibalization: dict, quality_payload: dict) -> dict:
                 "shared_impressions": float(pair.get("shared_impressions") or 0.0),
                 "queries": list(pair.get("queries") or []),
                 "recommended_primary": primary["url"],
-                "recommendation_confidence": (
-                    "low" if primary["quality_status"] == "missing_quality" else "review"
-                ),
+                "recommendation_confidence": confidence,
                 "candidates": [
                     {key: value for key, value in item.items() if key != "score"}
                     for item in ranked
