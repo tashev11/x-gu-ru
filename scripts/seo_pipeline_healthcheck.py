@@ -35,6 +35,7 @@ def main() -> int:
     evidence = read("server-opt/build_search_evidence.py", failures)
     quality = read("server-opt/pair_quality_audit.py", failures)
     policy = read("server-opt/build_pair_policy.py", failures)
+    coverage = read("server-opt/index_coverage_review.py", failures)
     cannibalization = read("server-opt/gsc_cannibalization_report.py", failures)
     consolidation = read("server-opt/build_cannibalization_review.py", failures)
     graph = read("server-opt/link_graph_cluster_audit.py", failures)
@@ -46,6 +47,7 @@ def main() -> int:
         "tests/test_build_search_evidence.py",
         "tests/test_pair_quality_audit.py",
         "tests/test_build_pair_policy.py",
+        "tests/test_index_coverage_review.py",
         "tests/test_gsc_cannibalization_report.py",
         "tests/test_build_cannibalization_review.py",
         "tests/test_link_graph_cluster_audit.py",
@@ -89,6 +91,17 @@ def main() -> int:
             "validate_input_freshness": "pair policy builder no longer checks evidence freshness",
             "--max-input-age-days": "pair policy builder has no explicit evidence-age limit",
             "different search evidence snapshot": "quality/evidence snapshot mismatch is no longer rejected",
+        },
+        failures,
+    )
+    tokens(
+        coverage,
+        {
+            "open_without_signal": "coverage review no longer finds open pairs without current signal",
+            "closed_with_signal_quality_ready": "coverage review no longer finds expansion candidates",
+            "open_with_signal_quality_fail": "coverage review no longer finds weak currently-open pairs",
+            "open_pair_signal_coverage_ratio": "coverage review no longer reports policy support ratio",
+            '"automatic_policy_changes": False': "coverage review can mutate policy automatically",
         },
         failures,
     )
@@ -147,11 +160,15 @@ def main() -> int:
         failures,
     )
 
-    need("gsc_cannibalization_report.py" in architecture, "SEO architecture does not document cannibalization audit", failures)
-    need("build_cannibalization_review.py" in architecture, "SEO architecture does not document consolidation review", failures)
-    need("link_graph_cluster_audit.py" in architecture, "SEO architecture does not document crawl-depth/service-cluster audit", failures)
-    need("metadata_intent_audit.py" in architecture, "SEO architecture does not document metadata/intent audit", failures)
-    need("whitelist_lifecycle_report.py" in architecture, "SEO architecture does not document whitelist lifecycle review", failures)
+    for tool in (
+        "index_coverage_review.py",
+        "gsc_cannibalization_report.py",
+        "build_cannibalization_review.py",
+        "link_graph_cluster_audit.py",
+        "metadata_intent_audit.py",
+        "whitelist_lifecycle_report.py",
+    ):
+        need(tool in architecture, f"SEO architecture does not document {tool}", failures)
 
     if failures:
         print("SEO pipeline healthcheck: FAIL")
@@ -162,6 +179,7 @@ def main() -> int:
     print("SEO pipeline healthcheck: OK")
     print("  search evidence is collected before index decisions")
     print("  evidence/quality freshness and provenance are enforced")
+    print("  exact policy coverage is compared with current demand + quality")
     print("  page quality blocks weak pair recommendations")
     print("  pair policy remains review-only before promotion")
     print("  GSC query/page cannibalization is measured with pagination")
