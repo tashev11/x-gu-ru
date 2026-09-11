@@ -42,15 +42,7 @@ index,follow
 
 Общая реализация находится в `index_policy.py`.
 
-Policy v1 — историческая матрица:
-
-```json
-{
-  "policy_version": 1,
-  "open_cities": ["moskva", "tver"],
-  "open_services": ["prodvizhenie-saita", "seo-audit-saita"]
-}
-```
+Policy v1 — историческая матрица `open_cities × open_services`.
 
 Policy v2 — точные пары:
 
@@ -110,18 +102,29 @@ python server-opt/link_graph_cluster_audit.py \
   --json-out /tmp/xgu-link-cluster.json
 ```
 
-`server-opt/link_graph_cluster_audit.py` показывает:
+`server-opt/link_graph_cluster_audit.py` показывает достижимость от главной, crawl depth и exact/near-duplicate кластеры одной услуги по разным городам.
 
-- сколько индексируемых URL достижимы от главной;
-- URL в замкнутых кластерах, недостижимых из `/`;
-- максимальную crawl depth;
-- распределение страниц по глубине;
-- страницы глубже заданного порога;
-- exact/near-duplicate кластеры одной услуги по разным городам.
+## 9. Шаблонность Title/H1/Description и пересечение интентов
 
-Это важно, потому что 50 URL могут иметь разные города и формально разные мета-теги, но оставаться практически одним шаблонным документом.
+Исторический generator строит Title по формуле вида `{service} в {city} | СЕО ГУРУ`, а Description использует общую региональную формулу. Это не означает автоматическую SEO-ошибку, но создаёт сильный шаблонный отпечаток при массовом масштабировании.
 
-## 9. Сначала поисковые данные, потом shrink
+Поэтому используется отдельный read-only аудит:
+
+```bash
+python server-opt/metadata_intent_audit.py \
+  --root /var/www/x-gu.ru/current \
+  --json-out /tmp/xgu-metadata-intent.json
+```
+
+Он измеряет похожесть Title/H1/Description и отдельно показывает:
+
+- страницы одной услуги по разным городам с очень похожими мета;
+- услуги, где большая доля всех городских пар выглядит как один мета-шаблон;
+- разные service pages одного города с подозрительно похожими мета/обещанием — возможный intent-overlap и будущая каннибализация.
+
+Высокая похожесть — сигнал для ревью. Не надо искусственно рандомить Title ради «уникальности»: сначала проверяется реальный интент и качество страницы.
+
+## 10. Сначала поисковые данные, потом shrink
 
 `server-opt/build_search_evidence.py` объединяет Яндекс Вебмастер, Google Search Console и manual protected URLs.
 
@@ -134,7 +137,7 @@ python server-opt/link_graph_cluster_audit.py \
 
 Скрипт не меняет production whitelist автоматически. GSC собирается с `startRow` pagination.
 
-## 10. Quality audit страниц с поисковым сигналом
+## 11. Quality audit страниц с поисковым сигналом
 
 ```bash
 python server-opt/pair_quality_audit.py \
@@ -145,7 +148,9 @@ python server-opt/pair_quality_audit.py \
 
 Жёсткие дефекты переводят страницу в `improve_before_index`. Near-duplicate получает `review_similarity`, а не автоматический запрет.
 
-## 11. Review-only policy v2
+Quality report хранит `generated_at` и `source_evidence_generated_at`, чтобы дальнейшее решение было связано с конкретным снимком поисковых данных.
+
+## 12. Review-only policy v2 и свежесть данных
 
 `server-opt/build_pair_policy.py` пересекает search evidence и page quality:
 
@@ -156,7 +161,9 @@ python server-opt/build_pair_policy.py --apply
 
 Candidate всегда содержит `"example_only": true`, поэтому не может быть случайно применён как production policy.
 
-## 12. Каннибализация
+По умолчанию builder отказывается использовать evidence/quality старше **14 дней** и отклоняет quality-report, если он был построен из другого evidence snapshot. Порог можно явно изменить через `--max-input-age-days`, но устаревшие данные не проходят незаметно.
+
+## 13. Каннибализация
 
 ```bash
 python server-opt/gsc_cannibalization_report.py \
@@ -166,7 +173,7 @@ python server-opt/gsc_cannibalization_report.py \
 
 `server-opt/gsc_cannibalization_report.py` запрашивает GSC в разрезе `query + page` и показывает affected pages, competing page pairs и отдельные **same-city competing pairs**.
 
-## 13. Review-план консолидации
+## 14. Review-план консолидации
 
 ```bash
 python server-opt/build_cannibalization_review.py
@@ -177,7 +184,7 @@ python server-opt/build_cannibalization_review.py --apply
 
 **Redirect/canonical/noindex автоматически не меняются.** Общие запросы ещё не доказывают одинаковый интент.
 
-## 14. Жизненный цикл whitelist
+## 15. Жизненный цикл whitelist
 
 Whitelist — это защита от случайного закрытия, а не пожизненная индексационная привилегия.
 
@@ -188,16 +195,11 @@ python server-opt/whitelist_lifecycle_report.py \
   --json-out /tmp/xgu-whitelist-lifecycle.json
 ```
 
-`server-opt/whitelist_lifecycle_report.py` разделяет защищённые URL на:
+Отчёт показывает URL с актуальным сигналом, stale review candidates, отсутствующие в текущем evidence и новые URL с сигналом вне whitelist.
 
-- имеющие актуальный Yandex/GSC/manual signal;
-- stale review candidates — защита есть, текущего сигнала нет;
-- URL, отсутствующие в текущем evidence dataset;
-- URL с новым поисковым сигналом, которые ещё не входят в whitelist.
+**Автоматического удаления нет.** Перед снятием защиты проверяются backlinks, конверсии, бизнес-критичность и исторические данные.
 
-**Автоматического удаления нет.** Перед снятием защиты нужно проверить backlinks, конверсии, бизнес-критичность и исторические данные.
-
-## 15. Целевой SEO-конвейер
+## 16. Целевой SEO-конвейер
 
 ```text
 десятки тысяч физических страниц
@@ -205,6 +207,8 @@ python server-opt/whitelist_lifecycle_report.py \
 programmatic_seo_audit.py
         ↓
 link_graph_cluster_audit.py
+        ↓
+metadata_intent_audit.py
         ↓
 Yandex + GSC + manual evidence
         ↓
@@ -235,7 +239,7 @@ strict predeploy
 production
 ```
 
-## 16. KPI
+## 17. KPI
 
 Смотрим не на количество созданных страниц, а на:
 
@@ -244,6 +248,8 @@ production
 - долю open URL с 0 impressions за 28/90 дней;
 - thin/orphan/unreachable/deep pages;
 - exact/near-duplicate pages и same-service cross-city clusters;
+- services with metadata template risk;
+- same-city cross-service metadata overlap;
 - `open → closed` links;
 - queries with multiple competing pages;
 - same-city competing pairs;
@@ -251,6 +257,6 @@ production
 - leads/conversions по landing pages;
 - low-value/duplicate/crawled-not-indexed exclusions.
 
-## 17. Практический принцип x-gu.ru
+## 18. Практический принцип x-gu.ru
 
 **Генерировать можно десятки тысяч страниц. Индексировать нужно только конкретные URL с отдельным поисковым интентом, достаточным качеством, нормальной внутренней доступностью и доказательствами ценности. Если несколько URL делят один интент — сначала измерить каннибализацию, затем вручную решить, разводить интенты или консолидировать страницы.**
