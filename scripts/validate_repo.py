@@ -69,6 +69,7 @@ def main() -> int:
         [
             ("Unit tests", [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"]),
             ("Repository invariants", [sys.executable, "scripts/repo_healthcheck.py"]),
+            ("SEO pipeline invariants", [sys.executable, "scripts/seo_pipeline_healthcheck.py"]),
         ]
     )
 
