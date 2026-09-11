@@ -37,6 +37,7 @@ def main() -> int:
     policy = read("server-opt/build_pair_policy.py", failures)
     cannibalization = read("server-opt/gsc_cannibalization_report.py", failures)
     consolidation = read("server-opt/build_cannibalization_review.py", failures)
+    graph = read("server-opt/link_graph_cluster_audit.py", failures)
     architecture = read("SEO_ARCHITECTURE.md", failures)
 
     for rel in (
@@ -45,6 +46,7 @@ def main() -> int:
         "tests/test_build_pair_policy.py",
         "tests/test_gsc_cannibalization_report.py",
         "tests/test_build_cannibalization_review.py",
+        "tests/test_link_graph_cluster_audit.py",
     ):
         read(rel, failures)
 
@@ -102,9 +104,21 @@ def main() -> int:
         },
         failures,
     )
+    tokens(
+        graph,
+        {
+            "unreachable_from_home_pages": "link audit no longer detects pages unreachable from home",
+            "max_crawl_depth": "link audit no longer measures crawl depth",
+            "crawl_depth_distribution": "link audit no longer reports depth distribution",
+            "same_service_near_duplicate_pages": "service-cluster audit no longer detects cross-city template similarity",
+            "same_service_exact_duplicate_pages": "service-cluster audit no longer detects exact same-service duplicates",
+        },
+        failures,
+    )
 
     need("gsc_cannibalization_report.py" in architecture, "SEO architecture does not document cannibalization audit", failures)
     need("build_cannibalization_review.py" in architecture, "SEO architecture does not document consolidation review", failures)
+    need("link_graph_cluster_audit.py" in architecture, "SEO architecture does not document crawl-depth/service-cluster audit", failures)
 
     if failures:
         print("SEO pipeline healthcheck: FAIL")
@@ -118,6 +132,7 @@ def main() -> int:
     print("  pair policy remains review-only before promotion")
     print("  GSC query/page cannibalization is measured with pagination")
     print("  consolidation recommendations never auto-redirect or auto-canonicalize")
+    print("  crawl depth and same-service cross-city similarity are measured")
     return 0
 
 
