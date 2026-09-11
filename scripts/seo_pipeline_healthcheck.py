@@ -38,6 +38,7 @@ def main() -> int:
     cannibalization = read("server-opt/gsc_cannibalization_report.py", failures)
     consolidation = read("server-opt/build_cannibalization_review.py", failures)
     graph = read("server-opt/link_graph_cluster_audit.py", failures)
+    whitelist_lifecycle = read("server-opt/whitelist_lifecycle_report.py", failures)
     architecture = read("SEO_ARCHITECTURE.md", failures)
 
     for rel in (
@@ -47,6 +48,7 @@ def main() -> int:
         "tests/test_gsc_cannibalization_report.py",
         "tests/test_build_cannibalization_review.py",
         "tests/test_link_graph_cluster_audit.py",
+        "tests/test_whitelist_lifecycle_report.py",
     ):
         read(rel, failures)
 
@@ -115,10 +117,21 @@ def main() -> int:
         },
         failures,
     )
+    tokens(
+        whitelist_lifecycle,
+        {
+            "stale_review_urls": "whitelist lifecycle no longer identifies stale protected URLs",
+            "missing_evidence_urls": "whitelist lifecycle no longer finds protected URLs absent from current evidence",
+            "signal_outside_whitelist_urls": "whitelist lifecycle no longer finds current signals outside protection",
+            '"automatic_removals": False': "whitelist lifecycle can remove protected URLs automatically",
+        },
+        failures,
+    )
 
     need("gsc_cannibalization_report.py" in architecture, "SEO architecture does not document cannibalization audit", failures)
     need("build_cannibalization_review.py" in architecture, "SEO architecture does not document consolidation review", failures)
     need("link_graph_cluster_audit.py" in architecture, "SEO architecture does not document crawl-depth/service-cluster audit", failures)
+    need("whitelist_lifecycle_report.py" in architecture, "SEO architecture does not document whitelist lifecycle review", failures)
 
     if failures:
         print("SEO pipeline healthcheck: FAIL")
@@ -133,6 +146,7 @@ def main() -> int:
     print("  GSC query/page cannibalization is measured with pagination")
     print("  consolidation recommendations never auto-redirect or auto-canonicalize")
     print("  crawl depth and same-service cross-city similarity are measured")
+    print("  protected URLs are periodically reviewable without automatic removal")
     return 0
 
 
