@@ -17,6 +17,7 @@ DEFAULT_COVERAGE = Path("/opt/p3-app/data/index_coverage.json")
 DEFAULT_CANNIBALIZATION = Path("/opt/p3-app/data/cannibalization.review.json")
 DEFAULT_GRAPH = Path("/opt/p3-app/data/link_graph_cluster.json")
 DEFAULT_METADATA = Path("/opt/p3-app/data/metadata_intent.json")
+DEFAULT_OPPORTUNITIES = Path("/opt/p3-app/data/gsc_opportunities.json")
 DEFAULT_OUT = Path("/opt/p3-app/data/seo_action_queue.json")
 
 
@@ -27,10 +28,15 @@ PRIORITY = {
     "OPEN_REVIEW": 75,
     "INTENT_REVIEW": 70,
     "INTERNAL_LINKING": 65,
+    "SNIPPET_REVIEW": 62,
+    "STRIKING_DISTANCE": 58,
     "CLOSE_REVIEW": 55,
     "QUALITY_AUDIT": 45,
+    "CONTENT_GROWTH": 35,
     "KEEP": 10,
 }
+
+GROWTH_CATEGORIES = {"SNIPPET_REVIEW", "STRIKING_DISTANCE", "CONTENT_GROWTH"}
 
 
 def _read_json(path: Path, *, required: bool) -> dict:
@@ -56,9 +62,8 @@ def _coverage_rows(payload: dict) -> dict[str, dict]:
             if not isinstance(raw, dict):
                 continue
             url = str(raw.get("url") or "").strip()
-            if not url:
-                continue
-            result[url] = {**raw, "coverage_cohort": str(cohort)}
+            if url:
+                result[url] = {**raw, "coverage_cohort": str(cohort)}
     return result
 
 
@@ -91,13 +96,23 @@ def _metadata_index(payload: dict) -> tuple[dict[str, list[dict]], set[str]]:
             url = str(row.get(key) or "").strip()
             if url:
                 cross[url].append(row)
-
     risky_services = {
         str(row.get("service"))
         for row in payload.get("service_stats") or []
         if isinstance(row, dict) and row.get("template_risk") and str(row.get("service") or "").strip()
     }
     return cross, risky_services
+
+
+def _opportunity_index(payload: dict) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for row in payload.get("opportunities") or []:
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        if url:
+            result[url] = row
+    return result
 
 
 def _base_action(cohort: str) -> tuple[str, list[str]]:
@@ -134,11 +149,13 @@ def build_queue(
     cannibalization: dict | None = None,
     graph: dict | None = None,
     metadata: dict | None = None,
+    opportunities: dict | None = None,
 ) -> dict:
     coverage_rows = _coverage_rows(coverage)
     cann_index = _cannibalization_index(cannibalization or {})
     unreachable, deep = _graph_index(graph or {})
     cross_meta, risky_services = _metadata_index(metadata or {})
+    opportunity_index = _opportunity_index(opportunities or {})
 
     items: list[dict] = []
     counts: Counter[str] = Counter()
@@ -177,6 +194,22 @@ def build_queue(
         if service in risky_services:
             reasons.append("service belongs to a high city-template-similarity metadata cluster")
             annotations["service_template_risk"] = True
+
+        opportunity = opportunity_index.get(url)
+        if opportunity is not None:
+            category = str(opportunity.get("category") or "")
+            annotations["gsc_opportunity"] = opportunity
+            if category in GROWTH_CATEGORIES:
+                secondary.append(category)
+                reasons.append(
+                    f"GSC growth opportunity: {category}, position={opportunity.get('position')}, "
+                    f"impressions={opportunity.get('impressions')}, ctr={opportunity.get('ctr')}"
+                )
+                if PRIORITY.get(category, 0) > PRIORITY[action]:
+                    action = category
+            elif category == "CLOSED_SIGNAL_REVIEW":
+                reasons.append("GSC independently reports search signal for a policy-closed URL")
+                annotations["coverage_opportunity_consistency_review"] = True
 
         if action == "KEEP" and "INTENT_REVIEW" in secondary:
             action = "INTENT_REVIEW"
@@ -233,6 +266,7 @@ def main() -> int:
     parser.add_argument("--cannibalization", type=Path, default=DEFAULT_CANNIBALIZATION)
     parser.add_argument("--graph", type=Path, default=DEFAULT_GRAPH)
     parser.add_argument("--metadata", type=Path, default=DEFAULT_METADATA)
+    parser.add_argument("--opportunities", type=Path, default=DEFAULT_OPPORTUNITIES)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--apply", action="store_true", help="write queue JSON only; never mutates SEO state")
     args = parser.parse_args()
@@ -242,11 +276,13 @@ def main() -> int:
         cannibalization = _read_json(args.cannibalization, required=False)
         graph = _read_json(args.graph, required=False)
         metadata = _read_json(args.metadata, required=False)
+        opportunities = _read_json(args.opportunities, required=False)
         queue = build_queue(
             coverage,
             cannibalization=cannibalization,
             graph=graph,
             metadata=metadata,
+            opportunities=opportunities,
         )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         print(f"SEO action queue failed: {exc}", file=sys.stderr)
