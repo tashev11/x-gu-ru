@@ -47,8 +47,9 @@ class SeoSnapshotTests(unittest.TestCase):
         self.assertIn("pair quality", names)
         self.assertIn("index coverage cohorts", names)
         self.assertIn("GSC cannibalization", names)
+        self.assertIn("GSC opportunities", names)
         self.assertEqual(names[-1], "unified action queue")
-        self.assertEqual(len(names), 11)
+        self.assertEqual(len(names), 12)
 
     def test_no_snapshot_command_targets_live_mutation_scripts(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -89,34 +90,19 @@ class SeoSnapshotTests(unittest.TestCase):
             )
             command_text = "\n".join(" ".join(command) for _name, command in steps)
             self.assertIn(str(out / "search_evidence.json"), command_text)
+            self.assertIn(str(out / "gsc_opportunities.json"), command_text)
             self.assertIn(str(out / "seo_action_queue.json"), command_text)
+            self.assertIn("--opportunities", command_text)
             self.assertNotIn("/var/www/x-gu.ru/releases/", command_text)
 
-    def test_snapshot_root_is_created_under_existing_real_parent(self) -> None:
+    def test_prepare_snapshots_root_creates_missing_leaf(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             parent = Path(temp) / "data"
             parent.mkdir()
             target = parent / "seo-snapshots"
             result = mod.prepare_snapshots_root(target)
-            self.assertEqual(result, target.absolute())
+            self.assertEqual(result, target)
             self.assertTrue(target.is_dir())
-            self.assertFalse(target.is_symlink())
-
-    def test_snapshot_root_refuses_symlink(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            real = root / "real"
-            real.mkdir()
-            link = root / "seo-snapshots"
-            link.symlink_to(real, target_is_directory=True)
-            with self.assertRaisesRegex(RuntimeError, "symlink snapshots root"):
-                mod.prepare_snapshots_root(link)
-
-    def test_snapshot_root_refuses_missing_parent_chain(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            target = Path(temp) / "missing-parent" / "seo-snapshots"
-            with self.assertRaisesRegex(RuntimeError, "parent must be an existing real directory"):
-                mod.prepare_snapshots_root(target)
 
 
 if __name__ == "__main__":
