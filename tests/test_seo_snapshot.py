@@ -92,6 +92,32 @@ class SeoSnapshotTests(unittest.TestCase):
             self.assertIn(str(out / "seo_action_queue.json"), command_text)
             self.assertNotIn("/var/www/x-gu.ru/releases/", command_text)
 
+    def test_snapshot_root_is_created_under_existing_real_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "data"
+            parent.mkdir()
+            target = parent / "seo-snapshots"
+            result = mod.prepare_snapshots_root(target)
+            self.assertEqual(result, target.absolute())
+            self.assertTrue(target.is_dir())
+            self.assertFalse(target.is_symlink())
+
+    def test_snapshot_root_refuses_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            real = root / "real"
+            real.mkdir()
+            link = root / "seo-snapshots"
+            link.symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(RuntimeError, "symlink snapshots root"):
+                mod.prepare_snapshots_root(link)
+
+    def test_snapshot_root_refuses_missing_parent_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "missing-parent" / "seo-snapshots"
+            with self.assertRaisesRegex(RuntimeError, "parent must be an existing real directory"):
+                mod.prepare_snapshots_root(target)
+
 
 if __name__ == "__main__":
     unittest.main()
