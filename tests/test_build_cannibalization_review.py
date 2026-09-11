@@ -70,9 +70,9 @@ class BuildCannibalizationReviewTests(unittest.TestCase):
 
     def test_search_winner_is_recommended_when_both_pages_are_clean(self) -> None:
         quality = {
-            "pages": [
-                {"url": "https://x-gu.ru/moskva/prodvizhenie-saita/", "status": "ready_for_review"},
-                {"url": "https://x-gu.ru/moskva/seo-prodvizhenie-saita/", "status": "ready_for_review"},
+            "pairs": [
+                {"url": "https://x-gu.ru/moskva/prodvizhenie-saita/", "quality_state": "clean", "flags": []},
+                {"url": "https://x-gu.ru/moskva/seo-prodvizhenie-saita/", "quality_state": "clean", "flags": []},
             ]
         }
         review = mod.build_review(self._cannibalization(), quality)
@@ -82,30 +82,38 @@ class BuildCannibalizationReviewTests(unittest.TestCase):
         self.assertEqual(winner["clicks"], 6)
         self.assertEqual(winner["impressions"], 120)
         self.assertEqual(winner["metric_source"], "query_conflicts")
+        self.assertEqual(winner["quality_status"], "clean")
 
     def test_clean_page_beats_hard_failing_page_even_with_less_search_signal(self) -> None:
         quality = {
-            "pages": [
+            "pairs": [
                 {
                     "url": "https://x-gu.ru/moskva/prodvizhenie-saita/",
-                    "status": "improve_before_index",
-                    "hard_failures": ["exact_duplicate"],
+                    "quality_state": "improve_before_index",
+                    "flags": ["exact_duplicate"],
                 },
-                {"url": "https://x-gu.ru/moskva/seo-prodvizhenie-saita/", "status": "ready_for_review"},
+                {
+                    "url": "https://x-gu.ru/moskva/seo-prodvizhenie-saita/",
+                    "quality_state": "clean",
+                    "flags": [],
+                },
             ]
         }
         review = mod.build_review(self._cannibalization(), quality)
         item = review["reviews"][0]
         self.assertEqual(item["recommended_primary"], "https://x-gu.ru/moskva/seo-prodvizhenie-saita/")
         self.assertFalse(item["candidates"][0]["hard_quality_fail"])
+        loser = next(row for row in item["candidates"] if row["url"].endswith("/prodvizhenie-saita/"))
+        self.assertTrue(loser["hard_quality_fail"])
+        self.assertIn("exact_duplicate", loser["quality_flags"])
 
-    def test_missing_quality_keeps_recommendation_low_confidence(self) -> None:
-        review = mod.build_review(self._cannibalization(), {"pages": []})
+    def test_missing_quality_for_all_pages_requires_fix_first_review(self) -> None:
+        review = mod.build_review(self._cannibalization(), {"pairs": []})
         self.assertEqual(review["reviews"][0]["recommendation_confidence"], "fix-first")
         self.assertFalse(review["automatic_changes"])
 
     def test_empty_pairs_are_safe(self) -> None:
-        review = mod.build_review({"query_conflicts": [], "same_city_pairs": []}, {"pages": []})
+        review = mod.build_review({"query_conflicts": [], "same_city_pairs": []}, {"pairs": []})
         self.assertEqual(review["review_pairs"], 0)
         self.assertEqual(review["reviews"], [])
 
